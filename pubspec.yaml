@@ -1,0 +1,30 @@
+name: navic
+description: A NavIC Navigation App
+
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Maps & Location
+  flutter_map: ^6.2.1
+  latlong2: ^0.9.1
+  geolocator: ^11.1.0
+
+  # URL & Sharing
+  url_launcher: ^6.2.2
+  share_plus: ^7.2.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.2
+
+flutter:
+  uses-material-design: true
