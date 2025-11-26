@@ -6,6 +6,7 @@ A Flutter mobile application that detects and utilizes NavIC (Navigation with In
 🛰️ NavIC Hardware Detection
 Automatic hardware detection - Checks if your device supports NavIC/IRNSS
 
+
 Real-time satellite monitoring - Detects active IRNSS satellites
 
 Hardware capability analysis - Uses Android GNSS capabilities API
