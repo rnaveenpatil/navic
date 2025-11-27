@@ -60,7 +60,7 @@ class _EmergencyPageState extends State<EmergencyPage> {
         _lastPosition = enhancedPos;
         _locationSource = enhancedPos.locationSource;
         _navicSatelliteCount = enhancedPos.navicSatellites ?? 0;
-        _satelliteInfo = enhancedPos.satelliteInfo ?? {};
+        _satelliteInfo = enhancedPos.satelliteInfo;
         _isNavicActive = enhancedPos.isNavicEnhanced;
       });
 
@@ -188,7 +188,7 @@ class _EmergencyPageState extends State<EmergencyPage> {
             _lastPosition = newPos;
             _locationSource = newPos.locationSource;
             _navicSatelliteCount = newPos.navicSatellites ?? 0;
-            _satelliteInfo = newPos.satelliteInfo ?? {};
+            _satelliteInfo = newPos.satelliteInfo;
             _isNavicActive = newPos.isNavicEnhanced;
             _currentStatus = "Live Tracking - ${DateTime.now().toString().split('.').first}";
           });
@@ -250,10 +250,8 @@ class _EmergencyPageState extends State<EmergencyPage> {
   }
 
   String _createLocationMessage(EnhancedPosition enhancedPos, String type) {
-    Position pos = enhancedPos.position;
-
-    String googleMaps = "https://www.google.com/maps?q=${pos.latitude},${pos.longitude}";
-    String openStreetMap = "https://www.openstreetmap.org/?mlat=${pos.latitude}&mlon=${pos.longitude}#map=18/${pos.latitude}/${pos.longitude}";
+    String googleMaps = "https://www.google.com/maps?q=${enhancedPos.latitude},${enhancedPos.longitude}";
+    String openStreetMap = "https://www.openstreetmap.org/?mlat=${enhancedPos.latitude}&mlon=${enhancedPos.longitude}#map=18/${enhancedPos.latitude}/${enhancedPos.longitude}";
 
     String navicStatus = enhancedPos.isNavicEnhanced
         ? "🛰️ **NAVIC ENHANCED POSITIONING**\n"
@@ -275,12 +273,12 @@ class _EmergencyPageState extends State<EmergencyPage> {
 
 $navicStatus
 📡 Location Source: ${enhancedPos.locationSource}
-🎯 Accuracy: ${pos.accuracy?.toStringAsFixed(1) ?? 'N/A'} meters
+🎯 Accuracy: ${enhancedPos.accuracy?.toStringAsFixed(1) ?? 'N/A'} meters
 🕒 Timestamp: ${DateTime.now().toString().split('.').first}
 $hardwareStatus$activeStatus$satelliteInfo
 📍 Coordinates:
-   • Latitude: ${pos.latitude.toStringAsFixed(6)}
-   • Longitude: ${pos.longitude.toStringAsFixed(6)}
+   • Latitude: ${enhancedPos.latitude.toStringAsFixed(6)}
+   • Longitude: ${enhancedPos.longitude.toStringAsFixed(6)}
 
 🔗 **Google Maps:**
 $googleMaps
@@ -297,10 +295,8 @@ ${type == "LIVE LOCATION TRACKING" ? "🔄 Live tracking active - location updat
   }
 
   String _createEmergencyMessage(EnhancedPosition enhancedPos, String type) {
-    Position pos = enhancedPos.position;
-
-    String googleMaps = "https://www.google.com/maps?q=${pos.latitude},${pos.longitude}";
-    String openStreetMap = "https://www.openstreetmap.org/?mlat=${pos.latitude}&mlon=${pos.longitude}#map=18/${pos.latitude}/${pos.longitude}";
+    String googleMaps = "https://www.google.com/maps?q=${enhancedPos.latitude},${enhancedPos.longitude}";
+    String openStreetMap = "https://www.openstreetmap.org/?mlat=${enhancedPos.latitude}&mlon=${enhancedPos.longitude}#map=18/${enhancedPos.latitude}/${enhancedPos.longitude}";
 
     String navicInfo = enhancedPos.isNavicEnhanced
         ? "• Positioning: NavIC Enhanced (${_navicSatelliteCount} satellites)\n"
@@ -311,9 +307,9 @@ ${type == "LIVE LOCATION TRACKING" ? "🔄 Live tracking active - location updat
     return """EMERGENCY! Need assistance immediately!
 
 My current location:
-• Latitude: ${pos.latitude.toStringAsFixed(6)}
-• Longitude: ${pos.longitude.toStringAsFixed(6)}
-• Accuracy: ${pos.accuracy?.toStringAsFixed(1) ?? 'N/A'} meters
+• Latitude: ${enhancedPos.latitude.toStringAsFixed(6)}
+• Longitude: ${enhancedPos.longitude.toStringAsFixed(6)}
+• Accuracy: ${enhancedPos.accuracy?.toStringAsFixed(1) ?? 'N/A'} meters
 $navicInfo$confidence
 Google Maps: $googleMaps
 OpenStreetMap: $openStreetMap
