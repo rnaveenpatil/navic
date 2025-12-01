@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:geolocator/geolocator.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:share_plus/share_plus.dart';
 import 'dart:async';
@@ -32,12 +31,9 @@ class _EmergencyPageState extends State<EmergencyPage> {
   }
 
   void _initializeLocationService() async {
-    // Check hardware support on initialization
-    final hardwareSupport = await _locationService.checkNavicHardwareSupport();
-    setState(() {
-      _isNavicHardwareSupported = hardwareSupport['isSupported'] ?? false;
-      _isNavicActive = hardwareSupport['isActive'] ?? false;
-    });
+    // Initialize location service which includes hardware detection
+    await _locationService.startRealTimeMonitoring();
+    // Hardware support is checked during real-time monitoring
   }
 
   // ---------------- Helper: Get location safely ----------------
@@ -273,7 +269,7 @@ class _EmergencyPageState extends State<EmergencyPage> {
 
 $navicStatus
 📡 Location Source: ${enhancedPos.locationSource}
-🎯 Accuracy: ${enhancedPos.accuracy?.toStringAsFixed(1) ?? 'N/A'} meters
+🎯 Accuracy: ${enhancedPos.accuracy.toStringAsFixed(1)} meters
 🕒 Timestamp: ${DateTime.now().toString().split('.').first}
 $hardwareStatus$activeStatus$satelliteInfo
 📍 Coordinates:
@@ -309,7 +305,7 @@ ${type == "LIVE LOCATION TRACKING" ? "🔄 Live tracking active - location updat
 My current location:
 • Latitude: ${enhancedPos.latitude.toStringAsFixed(6)}
 • Longitude: ${enhancedPos.longitude.toStringAsFixed(6)}
-• Accuracy: ${enhancedPos.accuracy?.toStringAsFixed(1) ?? 'N/A'} meters
+• Accuracy: ${enhancedPos.accuracy.toStringAsFixed(1)} meters
 $navicInfo$confidence
 Google Maps: $googleMaps
 OpenStreetMap: $openStreetMap
