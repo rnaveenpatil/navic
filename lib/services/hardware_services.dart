@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/services.dart';
 
 class NavicHardwareService {
@@ -14,17 +15,18 @@ class NavicHardwareService {
   static DateTime? _lastDetectionTime;
   static const Duration _cacheValidity = Duration(minutes: 5);
 
-  /// Checks if the device hardware supports NavIC with optimized satellite detection
+  /// Checks if the device hardware supports NavIC with enhanced satellite detection
   static Future<NavicDetectionResult> checkNavicHardware() async {
     try {
       // Return cached result if valid
       if (_cachedResult != null && _lastDetectionTime != null) {
         if (DateTime.now().difference(_lastDetectionTime!) < _cacheValidity) {
+          print("📦 Returning cached NavIC detection result");
           return _cachedResult!;
         }
       }
 
-      print("🚀 Starting optimized NavIC hardware detection...");
+      print("🚀 Starting enhanced NavIC hardware detection...");
       final Map<dynamic, dynamic> result = await _channel.invokeMethod('checkNavicHardware');
       final converted = _convertResult(result);
       
@@ -32,29 +34,37 @@ class NavicHardwareService {
       _cachedResult = detectionResult;
       _lastDetectionTime = DateTime.now();
 
-      // Log optimized detection results
+      // Log enhanced detection results
       _logDetectionResults(converted);
 
       return detectionResult;
     } on PlatformException catch (e) {
-      print("❌ Error checking NavIC hardware: ${e.message}");
-      return NavicDetectionResult.error(e.message ?? 'Unknown error');
+      print("❌ Platform error checking NavIC hardware: ${e.message}");
+      print("📋 Error details: ${e.details}");
+      return NavicDetectionResult.error('Platform error: ${e.message}');
+    } catch (e, stackTrace) {
+      print("❌ Unexpected error checking NavIC hardware: $e");
+      print("📋 Stack trace: $stackTrace");
+      return NavicDetectionResult.error('Unexpected error: $e');
     }
   }
 
-  /// Log detection results (kept separate for maintainability)
-  static void _logDetectionResults(Map<String, dynamic> data) {
-    print("🎯 Optimized Detection Results:");
-    print("  ✅ Supported: ${data['isSupported']}");
-    print("  📡 Active: ${data['isActive']}");
-    print("  🔧 Method: ${data['detectionMethod']}");
-    print("  🛰️ NavIC Satellites: ${data['satelliteCount']}");
-    print("  📍 Used in Fix: ${data['usedInFixCount']}");
-    print("  📊 Total Satellites: ${data['totalSatellites']}");
-    final signalStr = data['averageSignalStrength'] as double?;
-    print("  📶 Signal Strength: ${signalStr?.toStringAsFixed(1) ?? 'N/A'} dB-Hz");
-    print("  ⚡ Acquisition Time: ${data['acquisitionTimeMs']}ms");
-    print("  💾 Chipset: ${data['chipsetType']}");
+  /// Get all visible satellites
+  static Future<AllSatellitesResult> getAllSatellites() async {
+    try {
+      print("🛰️ Getting all visible satellites...");
+      final Map<dynamic, dynamic> result = await _channel.invokeMethod('getAllSatellites');
+      final converted = _convertResult(result);
+      
+      return AllSatellitesResult.fromMap(converted);
+    } on PlatformException catch (e) {
+      print("❌ Platform error getting all satellites: ${e.message}");
+      return AllSatellitesResult.error();
+    } catch (e, stackTrace) {
+      print("❌ Unexpected error getting all satellites: $e");
+      print("📋 Stack trace: $stackTrace");
+      return AllSatellitesResult.error();
+    }
   }
 
   /// Get device GNSS capabilities with enhanced information
@@ -64,18 +74,23 @@ class NavicHardwareService {
       final converted = _convertResult(capabilities);
       return GnssCapabilities.fromMap(converted);
     } on PlatformException catch (e) {
-      print("❌ Error getting GNSS capabilities: ${e.message}");
+      print("❌ Platform error getting GNSS capabilities: ${e.message}");
+      return GnssCapabilities.error();
+    } catch (e, stackTrace) {
+      print("❌ Unexpected error getting GNSS capabilities: $e");
+      print("📋 Stack trace: $stackTrace");
       return GnssCapabilities.error();
     }
   }
 
-  /// Start optimized real-time satellite monitoring
+  /// Start enhanced real-time satellite monitoring
   static Future<DetectionResponse> startRealTimeDetection() async {
     try {
       if (_isRealTimeActive) {
+        print("ℹ️ Real-time detection already active");
         return DetectionResponse(
-            success: false,
-            message: 'Real-time detection already active'
+          success: false,
+          message: 'Real-time detection already active'
         );
       }
 
@@ -86,14 +101,20 @@ class NavicHardwareService {
 
       _isRealTimeActive = converted['success'] == true;
 
-      print(_isRealTimeActive
-          ? "🛰️ Real-time NavIC detection started successfully"
-          : "❌ Failed to start real-time detection");
+      if (_isRealTimeActive) {
+        print("🛰️ Enhanced real-time NavIC detection started successfully");
+      } else {
+        print("❌ Failed to start real-time detection");
+      }
 
       return DetectionResponse.fromMap(converted);
     } on PlatformException catch (e) {
-      print("❌ Error starting real-time detection: ${e.message}");
-      return DetectionResponse.error('Failed to start detection: ${e.message}');
+      print("❌ Platform error starting real-time detection: ${e.message}");
+      return DetectionResponse.error('Platform error: ${e.message}');
+    } catch (e, stackTrace) {
+      print("❌ Unexpected error starting real-time detection: $e");
+      print("📋 Stack trace: $stackTrace");
+      return DetectionResponse.error('Unexpected error: $e');
     }
   }
 
@@ -101,9 +122,10 @@ class NavicHardwareService {
   static Future<DetectionResponse> stopRealTimeDetection() async {
     try {
       if (!_isRealTimeActive) {
+        print("ℹ️ Real-time detection not active");
         return DetectionResponse(
-            success: true,
-            message: 'Real-time detection not active'
+          success: true,
+          message: 'Real-time detection not active'
         );
       }
 
@@ -116,8 +138,12 @@ class NavicHardwareService {
       print("🛰️ Real-time NavIC detection stopped");
       return DetectionResponse.fromMap(converted);
     } on PlatformException catch (e) {
-      print("❌ Error stopping real-time detection: ${e.message}");
-      return DetectionResponse.error('Failed to stop detection: ${e.message}');
+      print("❌ Platform error stopping real-time detection: ${e.message}");
+      return DetectionResponse.error('Platform error: ${e.message}');
+    } catch (e, stackTrace) {
+      print("❌ Unexpected error stopping real-time detection: $e");
+      print("📋 Stack trace: $stackTrace");
+      return DetectionResponse.error('Unexpected error: $e');
     }
   }
 
@@ -125,9 +151,10 @@ class NavicHardwareService {
   static Future<DetectionResponse> startLocationUpdates() async {
     try {
       if (_isLocationTracking) {
+        print("ℹ️ Location updates already active");
         return DetectionResponse(
-            success: false,
-            message: 'Location updates already active'
+          success: false,
+          message: 'Location updates already active'
         );
       }
 
@@ -136,14 +163,20 @@ class NavicHardwareService {
 
       _isLocationTracking = converted['success'] == true;
 
-      print(_isLocationTracking
-          ? "📍 Location updates started successfully"
-          : "❌ Failed to start location updates");
+      if (_isLocationTracking) {
+        print("📍 Location updates started successfully");
+      } else {
+        print("❌ Failed to start location updates");
+      }
 
       return DetectionResponse.fromMap(converted);
     } on PlatformException catch (e) {
-      print("❌ Error starting location updates: ${e.message}");
-      return DetectionResponse.error('Failed to start location updates: ${e.message}');
+      print("❌ Platform error starting location updates: ${e.message}");
+      return DetectionResponse.error('Platform error: ${e.message}');
+    } catch (e, stackTrace) {
+      print("❌ Unexpected error starting location updates: $e");
+      print("📋 Stack trace: $stackTrace");
+      return DetectionResponse.error('Unexpected error: $e');
     }
   }
 
@@ -151,9 +184,10 @@ class NavicHardwareService {
   static Future<DetectionResponse> stopLocationUpdates() async {
     try {
       if (!_isLocationTracking) {
+        print("ℹ️ Location updates not active");
         return DetectionResponse(
-            success: true,
-            message: 'Location updates not active'
+          success: true,
+          message: 'Location updates not active'
         );
       }
 
@@ -165,8 +199,12 @@ class NavicHardwareService {
       print("📍 Location updates stopped");
       return DetectionResponse.fromMap(converted);
     } on PlatformException catch (e) {
-      print("❌ Error stopping location updates: ${e.message}");
-      return DetectionResponse.error('Failed to stop location updates: ${e.message}');
+      print("❌ Platform error stopping location updates: ${e.message}");
+      return DetectionResponse.error('Platform error: ${e.message}');
+    } catch (e, stackTrace) {
+      print("❌ Unexpected error stopping location updates: $e");
+      print("📋 Stack trace: $stackTrace");
+      return DetectionResponse.error('Unexpected error: $e');
     }
   }
 
@@ -177,7 +215,11 @@ class NavicHardwareService {
       final converted = _convertResult(result);
       return LocationPermissions.fromMap(converted);
     } on PlatformException catch (e) {
-      print("❌ Error checking permissions: ${e.message}");
+      print("❌ Platform error checking permissions: ${e.message}");
+      return LocationPermissions.error();
+    } catch (e, stackTrace) {
+      print("❌ Unexpected error checking permissions: $e");
+      print("📋 Stack trace: $stackTrace");
       return LocationPermissions.error();
     }
   }
@@ -185,6 +227,8 @@ class NavicHardwareService {
   /// Handle method calls from native side
   static Future<dynamic> _handleMethodCall(MethodCall call) async {
     try {
+      print("📱 Method call received: ${call.method}");
+      
       switch (call.method) {
         case "onSatelliteUpdate":
           await _handleSatelliteUpdate(call);
@@ -192,51 +236,152 @@ class NavicHardwareService {
         case "onLocationUpdate":
           await _handleLocationUpdate(call);
           break;
+        default:
+          print("⚠️ Unknown method call: ${call.method}");
       }
-    } catch (e) {
-      print("❌ Error in method call handler: $e");
+    } on PlatformException catch (e) {
+      print("❌ Platform error in method call handler: ${e.message}");
+    } catch (e, stackTrace) {
+      print("❌ Unexpected error in method call handler: $e");
+      print("📋 Stack trace: $stackTrace");
     }
     return null;
   }
 
-  /// Handle satellite update callback
+  /// Handle satellite update callback with enhanced information
   static Future<void> _handleSatelliteUpdate(MethodCall call) async {
-    if (_onSatelliteUpdate == null) return;
+    if (_onSatelliteUpdate == null) {
+      print("⚠️ No satellite update callback registered");
+      return;
+    }
     
-    final Map<dynamic, dynamic> data = call.arguments as Map<dynamic, dynamic>;
-    final satelliteData = SatelliteUpdateData.fromMap(_convertResult(data));
-    _onSatelliteUpdate!(satelliteData.toMap());
+    try {
+      final Map<dynamic, dynamic> data = call.arguments as Map<dynamic, dynamic>;
+      final convertedData = _convertResult(data);
+      
+      // Call the registered callback
+      _onSatelliteUpdate!(convertedData);
 
-    // Log satellite update summary if NavIC satellites detected
-    if (satelliteData.navicSatellites.isNotEmpty) {
-      print("📡 Satellite Update - NavIC: ${satelliteData.navicSatellites.length} "
-          "(${satelliteData.navicUsedInFix} in fix), "
-          "Total: ${satelliteData.totalSatellites}, "
-          "Primary: ${satelliteData.primarySystem}");
+      // Log enhanced satellite update summary
+      _logSatelliteUpdate(convertedData);
+      
+    } catch (e, stackTrace) {
+      print("❌ Error processing satellite update: $e");
+      print("📋 Stack trace: $stackTrace");
     }
   }
 
   /// Handle location update callback
   static Future<void> _handleLocationUpdate(MethodCall call) async {
-    if (_onLocationUpdate == null) return;
+    if (_onLocationUpdate == null) {
+      print("⚠️ No location update callback registered");
+      return;
+    }
     
-    final Map<dynamic, dynamic> data = call.arguments as Map<dynamic, dynamic>;
-    final locationData = _convertResult(data);
-    _onLocationUpdate!(locationData);
+    try {
+      final Map<dynamic, dynamic> data = call.arguments as Map<dynamic, dynamic>;
+      final locationData = _convertResult(data);
+      
+      // Call the registered callback
+      _onLocationUpdate!(locationData);
 
-    // Log location update
+      // Log location update
+      _logLocationUpdate(locationData);
+      
+    } catch (e, stackTrace) {
+      print("❌ Error processing location update: $e");
+      print("📋 Stack trace: $stackTrace");
+    }
+  }
+
+  /// Log detection results with enhanced information
+  static void _logDetectionResults(Map<String, dynamic> data) {
+    print("\n🎯 Enhanced Detection Results:");
+    print("  ✅ Supported: ${data['isSupported']}");
+    print("  📡 Active: ${data['isActive']}");
+    print("  🔧 Method: ${data['detectionMethod']}");
+    print("  🛰️ NavIC Satellites: ${data['satelliteCount']}");
+    print("  📍 Used in Fix: ${data['usedInFixCount']}");
+    print("  📊 Total Satellites: ${data['totalSatellites']}");
+    final signalStr = data['averageSignalStrength'] as double?;
+    print("  📶 Signal Strength: ${signalStr?.toStringAsFixed(1) ?? 'N/A'} dB-Hz");
+    print("  ⚡ Acquisition Time: ${data['acquisitionTimeMs']}ms");
+    print("  💾 Chipset: ${data['chipsetType']}");
+    print("  📡 Positioning Method: ${data['positioningMethod'] ?? 'UNKNOWN'}");
+    print("  📶 L5 Band: ${data['hasL5Band'] == true ? '✅ Supported' : '❌ Not Supported'}");
+    
+    if (data['l5BandInfo'] is Map) {
+      final l5Info = data['l5BandInfo'] as Map<String, dynamic>;
+      final confidence = (l5Info['confidence'] as num?)?.toDouble() ?? 0.0;
+      print("  🔍 L5 Confidence: ${(confidence * 100).toStringAsFixed(1)}%");
+    }
+    
+    // Log verification methods
+    if (data['verificationMethods'] is List) {
+      final methods = data['verificationMethods'] as List<dynamic>;
+      if (methods.isNotEmpty) {
+        print("  🔐 Verification Methods: ${methods.join(', ')}");
+      }
+    }
+  }
+
+  /// Log satellite update information
+  static void _logSatelliteUpdate(Map<String, dynamic> satelliteData) {
+    final total = satelliteData['totalSatellites'] ?? 0;
+    final navicCount = satelliteData['navicSatellitesCount'] ?? 0;
+    final navicUsed = satelliteData['navicUsedInFix'] ?? 0;
+    final primary = satelliteData['primarySystem'] ?? 'GPS';
+    final hasL5 = satelliteData['hasL5Band'] ?? false;
+    
+    print("\n📡 Enhanced Satellite Update:");
+    print("  📡 Total Satellites: $total");
+    if (navicCount > 0) {
+      print("  🇮🇳 NavIC: $navicCount ($navicUsed in fix)");
+    }
+    print("  🎯 Primary System: $primary");
+    print("  📶 L5 Band: ${hasL5 ? '✅ Enabled' : '❌ Not Available'}");
+    
+    // Log system statistics if available
+    if (satelliteData['systemStats'] is Map) {
+      final systemStats = satelliteData['systemStats'] as Map<String, dynamic>;
+      print("  📊 System Usage:");
+      for (final entry in systemStats.entries) {
+        if (entry.value is Map) {
+          final stats = entry.value as Map<String, dynamic>;
+          final totalSats = stats['total'] ?? 0;
+          final used = stats['used'] ?? 0;
+          if (totalSats > 0) {
+            final flag = stats['flag'] ?? '🌍';
+            print("    $flag ${entry.key}: $used/$totalSats in fix");
+          }
+        }
+      }
+    }
+  }
+
+  /// Log location update information
+  static void _logLocationUpdate(Map<String, dynamic> locationData) {
     final lat = (locationData['latitude'] as num?)?.toStringAsFixed(6) ?? 'N/A';
     final lng = (locationData['longitude'] as num?)?.toStringAsFixed(6) ?? 'N/A';
     final acc = (locationData['accuracy'] as num?)?.toStringAsFixed(1) ?? 'N/A';
     final provider = locationData['provider'] ?? 'UNKNOWN';
+    final speed = (locationData['speed'] as num?)?.toStringAsFixed(1) ?? '0.0';
+    final bearing = (locationData['bearing'] as num?)?.toStringAsFixed(0) ?? '0';
+    final altitude = (locationData['altitude'] as num?)?.toStringAsFixed(1) ?? 'N/A';
     
-    print("📍 Location Update - Lat: $lat, Lng: $lng, Acc: ${acc}m, Provider: $provider");
+    print("\n📍 Location Update:");
+    print("  🌍 Coordinates: $lat, $lng");
+    print("  ⛰️ Altitude: ${altitude}m");
+    print("  📏 Accuracy: ${acc}m");
+    print("  🚀 Speed: ${speed}m/s");
+    print("  🧭 Bearing: ${bearing}°");
+    print("  🔧 Provider: $provider");
   }
 
   /// Set callback for satellite updates
   static void setSatelliteUpdateCallback(Function(Map<String, dynamic>) callback) {
     _onSatelliteUpdate = callback;
-    print("📡 Satellite update callback registered");
+    print("📡 Enhanced satellite update callback registered");
   }
 
   /// Set callback for location updates
@@ -263,13 +408,20 @@ class NavicHardwareService {
   /// Check if location tracking is active
   static bool get isLocationTracking => _isLocationTracking;
 
+  /// Clear cached detection results
+  static void clearCache() {
+    _cachedResult = null;
+    _lastDetectionTime = null;
+    print("🧹 Detection cache cleared");
+  }
+
   // Helper method to convert dynamic Map to String-keyed Map
   static Map<String, dynamic> _convertResult(Map<dynamic, dynamic> result) {
     return result.cast<String, dynamic>();
   }
 }
 
-// Data Models for type-safe responses
+// Enhanced Data Models for type-safe responses
 
 class NavicDetectionResult {
   final bool isSupported;
@@ -285,6 +437,10 @@ class NavicDetectionResult {
   final List<dynamic> satelliteDetails;
   final int acquisitionTimeMs;
   final List<dynamic> verificationMethods;
+  final bool hasL5Band;
+  final Map<String, dynamic> l5BandInfo;
+  final List<dynamic> allSatellites;
+  final String positioningMethod;
   final bool hasError;
 
   const NavicDetectionResult({
@@ -301,6 +457,10 @@ class NavicDetectionResult {
     required this.satelliteDetails,
     required this.acquisitionTimeMs,
     required this.verificationMethods,
+    required this.hasL5Band,
+    required this.l5BandInfo,
+    required this.allSatellites,
+    required this.positioningMethod,
     this.hasError = false,
   });
 
@@ -319,6 +479,10 @@ class NavicDetectionResult {
       satelliteDetails: map['satelliteDetails'] as List<dynamic>? ?? [],
       acquisitionTimeMs: map['acquisitionTimeMs'] as int? ?? 0,
       verificationMethods: map['verificationMethods'] as List<dynamic>? ?? [],
+      hasL5Band: map['hasL5Band'] as bool? ?? false,
+      l5BandInfo: Map<String, dynamic>.from(map['l5BandInfo'] as Map? ?? {}),
+      allSatellites: map['allSatellites'] as List<dynamic>? ?? [],
+      positioningMethod: map['positioningMethod'] as String? ?? 'UNKNOWN',
     );
   }
 
@@ -337,6 +501,10 @@ class NavicDetectionResult {
       satelliteDetails: const [],
       acquisitionTimeMs: 0,
       verificationMethods: const [],
+      hasL5Band: false,
+      l5BandInfo: const {},
+      allSatellites: const [],
+      positioningMethod: 'ERROR',
       hasError: true,
     );
   }
@@ -355,6 +523,10 @@ class NavicDetectionResult {
     'satelliteDetails': satelliteDetails,
     'acquisitionTimeMs': acquisitionTimeMs,
     'verificationMethods': verificationMethods,
+    'hasL5Band': hasL5Band,
+    'l5BandInfo': l5BandInfo,
+    'allSatellites': allSatellites,
+    'positioningMethod': positioningMethod,
     'hasError': hasError,
   };
 }
@@ -416,16 +588,19 @@ class GnssCapabilities {
 class DetectionResponse {
   final bool success;
   final String message;
+  final bool hasL5Band;
 
   const DetectionResponse({
     required this.success,
     required this.message,
+    this.hasL5Band = false,
   });
 
   factory DetectionResponse.fromMap(Map<String, dynamic> map) {
     return DetectionResponse(
       success: map['success'] as bool? ?? false,
       message: map['message'] as String? ?? 'No response message',
+      hasL5Band: map['hasL5Band'] as bool? ?? false,
     );
   }
 
@@ -433,6 +608,7 @@ class DetectionResponse {
     return DetectionResponse(
       success: false,
       message: message,
+      hasL5Band: false,
     );
   }
 }
@@ -463,61 +639,39 @@ class LocationPermissions {
   );
 }
 
-class SatelliteUpdateData {
-  final String type;
-  final int timestamp;
-  final int totalSatellites;
-  final Map<String, int> constellations;
+class AllSatellitesResult {
   final List<dynamic> satellites;
-  final List<dynamic> navicSatellites;
-  final bool isNavicAvailable;
-  final int navicSatellitesCount;
-  final int navicUsedInFix;
-  final String primarySystem;
-  final String locationProvider;
+  final List<dynamic> systems;
+  final int totalSatellites;
+  final bool hasL5Band;
+  final int timestamp;
+  final bool hasError;
 
-  const SatelliteUpdateData({
-    required this.type,
-    required this.timestamp,
-    required this.totalSatellites,
-    required this.constellations,
+  const AllSatellitesResult({
     required this.satellites,
-    required this.navicSatellites,
-    required this.isNavicAvailable,
-    required this.navicSatellitesCount,
-    required this.navicUsedInFix,
-    required this.primarySystem,
-    required this.locationProvider,
+    required this.systems,
+    required this.totalSatellites,
+    required this.hasL5Band,
+    required this.timestamp,
+    this.hasError = false,
   });
 
-  factory SatelliteUpdateData.fromMap(Map<String, dynamic> map) {
-    final navicSatsList = map['navicSatellites'] as List<dynamic>? ?? [];
-    return SatelliteUpdateData(
-      type: map['type'] as String? ?? 'UNKNOWN',
-      timestamp: map['timestamp'] as int? ?? 0,
-      totalSatellites: map['totalSatellites'] as int? ?? 0,
-      constellations: Map<String, int>.from(map['constellations'] as Map? ?? {}),
+  factory AllSatellitesResult.fromMap(Map<String, dynamic> map) {
+    return AllSatellitesResult(
       satellites: map['satellites'] as List<dynamic>? ?? [],
-      navicSatellites: navicSatsList,
-      isNavicAvailable: map['isNavicAvailable'] as bool? ?? false,
-      navicSatellitesCount: navicSatsList.length,
-      navicUsedInFix: map['navicUsedInFix'] as int? ?? 0,
-      primarySystem: map['primarySystem'] as String? ?? 'GPS',
-      locationProvider: map['locationProvider'] as String? ?? 'UNKNOWN',
+      systems: map['systems'] as List<dynamic>? ?? [],
+      totalSatellites: map['totalSatellites'] as int? ?? 0,
+      hasL5Band: map['hasL5Band'] as bool? ?? false,
+      timestamp: map['timestamp'] as int? ?? 0,
     );
   }
 
-  Map<String, dynamic> toMap() => {
-    'type': type,
-    'timestamp': timestamp,
-    'totalSatellites': totalSatellites,
-    'constellations': constellations,
-    'satellites': satellites,
-    'navicSatellites': navicSatellites,
-    'isNavicAvailable': isNavicAvailable,
-    'navicSatellitesCount': navicSatellitesCount,
-    'navicUsedInFix': navicUsedInFix,
-    'primarySystem': primarySystem,
-    'locationProvider': locationProvider,
-  };
+  factory AllSatellitesResult.error() => const AllSatellitesResult(
+    satellites: [],
+    systems: [],
+    totalSatellites: 0,
+    hasL5Band: false,
+    timestamp: 0,
+    hasError: true,
+  );
 }

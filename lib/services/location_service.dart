@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:geolocator/geolocator.dart';
 import 'package:navic/services/hardware_services.dart';
 
@@ -17,6 +18,9 @@ class EnhancedPosition {
   final int? totalSatellites;
   final int? navicUsedInFix;
   final Map<String, dynamic> satelliteInfo;
+  final bool hasL5Band;
+  final String positioningMethod;
+  final Map<String, dynamic> systemStats;
 
   const EnhancedPosition({
     required this.latitude,
@@ -33,8 +37,12 @@ class EnhancedPosition {
     this.navicSatellites,
     this.totalSatellites,
     this.navicUsedInFix,
+    required this.hasL5Band,
+    required this.positioningMethod,
     Map<String, dynamic>? satelliteInfo,
-  }) : satelliteInfo = satelliteInfo ?? const {};
+    Map<String, dynamic>? systemStats,
+  }) : satelliteInfo = satelliteInfo ?? const {},
+        systemStats = systemStats ?? const {};
 
   factory EnhancedPosition.fromPosition(
       Position position, {
@@ -45,7 +53,10 @@ class EnhancedPosition {
         int? navicSatellites,
         int? totalSatellites,
         int? navicUsedInFix,
+        required bool hasL5Band,
+        required String positioningMethod,
         Map<String, dynamic>? satelliteInfo,
+        Map<String, dynamic>? systemStats,
       }) {
     return EnhancedPosition(
       latitude: position.latitude,
@@ -62,7 +73,10 @@ class EnhancedPosition {
       navicSatellites: navicSatellites,
       totalSatellites: totalSatellites,
       navicUsedInFix: navicUsedInFix,
+      hasL5Band: hasL5Band,
+      positioningMethod: positioningMethod,
       satelliteInfo: satelliteInfo,
+      systemStats: systemStats,
     );
   }
 
@@ -81,14 +95,19 @@ class EnhancedPosition {
     'navicSatellites': navicSatellites,
     'totalSatellites': totalSatellites,
     'navicUsedInFix': navicUsedInFix,
+    'hasL5Band': hasL5Band,
+    'positioningMethod': positioningMethod,
     'satelliteInfo': satelliteInfo,
+    'systemStats': systemStats,
   };
 
   @override
   String toString() {
     return 'EnhancedPosition(lat: ${latitude.toStringAsFixed(6)}, lng: ${longitude.toStringAsFixed(6)}, '
         'acc: ${accuracy.toStringAsFixed(2)}m, navic: $isNavicEnhanced, '
-        'conf: ${(confidenceScore * 100).toStringAsFixed(1)}%)';
+        'conf: ${(confidenceScore * 100).toStringAsFixed(1)}%, '
+        'L5: ${hasL5Band ? "✅" : "❌"}, '
+        'Method: $positioningMethod)';
   }
 }
 
@@ -97,7 +116,7 @@ class LocationService {
   final List<double> _recentAccuracies = [];
   final List<Position> _rawPositions = [];
 
-  // Hardware state from optimized detection
+  // Hardware state from enhanced detection
   bool _isNavicSupported = false;
   bool _isNavicActive = false;
   int _navicSatelliteCount = 0;
@@ -109,6 +128,10 @@ class LocationService {
   double _averageSignalStrength = 0.0;
   String _chipsetType = "UNKNOWN";
   double _confidenceLevel = 0.0;
+  bool _hasL5Band = false;
+  String _positioningMethod = "GPS_PRIMARY";
+  Map<String, dynamic> _l5BandInfo = {};
+  Map<String, dynamic> _systemStats = {};
 
   // Performance tracking
   double _bestAccuracy = double.infinity;
@@ -116,29 +139,34 @@ class LocationService {
   int _totalReadings = 0;
   DateTime? _lastHardwareCheck;
 
+  // Satellite tracking
+  List<dynamic> _allSatellites = [];
+  List<dynamic> _visibleSystems = [];
+
   static final LocationService _instance = LocationService._internal();
   factory LocationService() => _instance;
+
   LocationService._internal() {
     _initializeService();
   }
 
-  /// Initialize service with hardware detection
+  /// Initialize service with enhanced hardware detection
   Future<void> _initializeService() async {
-    print("🚀 Initializing Enhanced Location Service...");
+    print("🚀 Initializing Enhanced Location Service with NavIC + L5 support...");
     await _performHardwareDetection();
   }
 
-  /// Perform optimized hardware detection
+  /// Perform enhanced hardware detection
   Future<void> _performHardwareDetection() async {
     try {
       if (_lastHardwareCheck != null &&
-          DateTime.now().difference(_lastHardwareCheck!) < Duration(minutes: 5)) {
+          DateTime.now().difference(_lastHardwareCheck!) < const Duration(minutes: 5)) {
         return; // Use cached results for 5 minutes
       }
 
       final hardwareResult = await NavicHardwareService.checkNavicHardware();
 
-      // Update state with optimized detection results
+      // Update state with enhanced detection results
       _isNavicSupported = hardwareResult.isSupported;
       _isNavicActive = hardwareResult.isActive;
       _navicSatelliteCount = hardwareResult.satelliteCount;
@@ -148,23 +176,55 @@ class LocationService {
       _confidenceLevel = hardwareResult.confidenceLevel;
       _chipsetType = hardwareResult.chipsetType;
       _averageSignalStrength = hardwareResult.averageSignalStrength;
+      _hasL5Band = hardwareResult.hasL5Band;
+      _positioningMethod = hardwareResult.positioningMethod;
+      _l5BandInfo = hardwareResult.l5BandInfo;
       _lastHardwareCheck = DateTime.now();
 
-      // Log only in debug mode
+      // Get all visible satellites
+      await _updateSatelliteData();
+
+      // Log enhanced detection results
       _logHardwareDetectionResult();
 
     } catch (e) {
-      print("❌ Hardware detection failed: $e");
+      print("❌ Enhanced hardware detection failed: $e");
       _resetToDefaultState();
     }
   }
 
-  /// Log hardware detection results (optimized)
+  /// Update satellite data
+  Future<void> _updateSatelliteData() async {
+    try {
+      final satellitesResult = await NavicHardwareService.getAllSatellites();
+      if (!satellitesResult.hasError) {
+        _allSatellites = satellitesResult.satellites;
+        _visibleSystems = satellitesResult.systems;
+      }
+    } catch (e) {
+      print("⚠️ Failed to get satellite data: $e");
+    }
+  }
+
+  /// Log hardware detection results
   void _logHardwareDetectionResult() {
-    print("🎯 Hardware Detection - "
-        "NavIC: ${_isNavicSupported ? 'Supported' : 'Not Supported'} | "
-        "Active: $_isNavicActive | "
-        "Sats: $_navicSatelliteCount ($_navicUsedInFix in fix)");
+    print("\n🎯 Enhanced Hardware Detection:");
+    print("  ✅ NavIC Supported: $_isNavicSupported");
+    print("  📡 NavIC Active: $_isNavicActive");
+    print("  🛰️ NavIC Sats: $_navicSatelliteCount ($_navicUsedInFix in fix)");
+    print("  📊 Total Sats: $_totalSatelliteCount");
+    print("  🔧 Method: $_detectionMethod");
+    print("  📶 Signal: ${_averageSignalStrength.toStringAsFixed(1)} dB-Hz");
+    print("  💾 Chipset: $_chipsetType");
+    print("  🎯 Positioning: $_positioningMethod");
+    print("  📡 L5 Band: ${_hasL5Band ? '✅ Supported' : '❌ Not Supported'}");
+
+    if (_hasL5Band && _l5BandInfo.isNotEmpty) {
+      final confidence = (_l5BandInfo['confidence'] as num?)?.toDouble() ?? 0.0;
+      final methods = (_l5BandInfo['detectionMethods'] as List<dynamic>?)?.join(', ') ?? 'N/A';
+      print("  🔍 L5 Confidence: ${(confidence * 100).toStringAsFixed(1)}%");
+      print("  🛠️ L5 Methods: $methods");
+    }
   }
 
   void _resetToDefaultState() {
@@ -177,6 +237,12 @@ class LocationService {
     _confidenceLevel = 0.0;
     _chipsetType = "UNKNOWN";
     _averageSignalStrength = 0.0;
+    _hasL5Band = false;
+    _positioningMethod = "ERROR";
+    _l5BandInfo = {};
+    _systemStats = {};
+    _allSatellites = [];
+    _visibleSystems = [];
   }
 
   /// Get current location with enhanced accuracy optimization
@@ -194,7 +260,7 @@ class LocationService {
 
       final position = await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.bestForNavigation,
-        timeLimit: Duration(seconds: 30),
+        timeLimit: const Duration(seconds: 30),
       );
 
       _updatePerformanceTracking(position.accuracy, position);
@@ -205,12 +271,12 @@ class LocationService {
       return enhancedPosition;
 
     } catch (e) {
-      print("❌ Location acquisition failed: $e");
+      print("❌ Enhanced location acquisition failed: $e");
       return null;
     }
   }
 
-  /// Create enhanced position with optimized accuracy calculations
+  /// Create enhanced position with L5 band optimization
   EnhancedPosition _createEnhancedPosition(Position position) {
     final isNavicEnhanced = _isNavicSupported && _isNavicActive && _navicUsedInFix > 0;
     final locationSource = isNavicEnhanced ? "NAVIC" : _primarySystem;
@@ -240,15 +306,25 @@ class LocationService {
       navicSatellites: _navicSatelliteCount,
       totalSatellites: _totalSatelliteCount,
       navicUsedInFix: _navicUsedInFix,
+      hasL5Band: _hasL5Band,
+      positioningMethod: _positioningMethod,
       satelliteInfo: satelliteInfo,
+      systemStats: _systemStats,
     );
   }
 
-  /// Optimized accuracy enhancement calculation
+  /// Enhanced accuracy calculation with L5 band support
   double _calculateEnhancedAccuracy(double baseAccuracy, bool isNavicEnhanced) {
     double enhancedAccuracy = baseAccuracy;
 
-    // NAVIC ENHANCEMENT - Based on actual satellite usage
+    // L5 BAND ENHANCEMENT
+    if (_hasL5Band) {
+      final l5Confidence = (_l5BandInfo['confidence'] as num?)?.toDouble() ?? 0.0;
+      final l5Boost = l5Confidence * 0.25; // Up to 25% improvement with L5
+      enhancedAccuracy *= (1.0 - l5Boost);
+    }
+
+    // NAVIC ENHANCEMENT
     if (isNavicEnhanced) {
       if (_navicUsedInFix >= 3) {
         enhancedAccuracy *= 0.60; // 40% improvement for strong NavIC
@@ -281,12 +357,19 @@ class LocationService {
     }
 
     // Apply realistic bounds
-    return enhancedAccuracy.clamp(0.8, 50.0);
+    return enhancedAccuracy.clamp(0.5, 50.0);
   }
 
-  /// Calculate confidence score based on multiple factors
+  /// Calculate confidence score with L5 consideration
   double _calculateConfidenceScore(double accuracy, bool isNavicEnhanced) {
     double score = 0.6 + (_confidenceLevel * 0.2);
+
+    // L5 BAND CONFIDENCE
+    if (_hasL5Band) {
+      score += 0.20; // Significant confidence boost with L5
+      final l5Confidence = (_l5BandInfo['confidence'] as num?)?.toDouble() ?? 0.0;
+      score += l5Confidence * 0.10; // Additional based on L5 confidence
+    }
 
     // NAVIC CONFIDENCE
     if (isNavicEnhanced) {
@@ -297,7 +380,8 @@ class LocationService {
     }
 
     // ACCURACY CONFIDENCE
-    if (accuracy < 2.0) score += 0.15;
+    if (accuracy < 1.0) score += 0.20;
+    else if (accuracy < 2.0) score += 0.15;
     else if (accuracy < 5.0) score += 0.10;
     else if (accuracy < 8.0) score += 0.05;
 
@@ -312,7 +396,7 @@ class LocationService {
   Map<String, dynamic> _createSatelliteInfo(
       double rawAccuracy,
       double enhancedAccuracy,
-      bool isNavicEnhanced
+      bool isNavicEnhanced,
       ) {
     final improvement = ((rawAccuracy - enhancedAccuracy) / rawAccuracy * 100);
 
@@ -326,51 +410,137 @@ class LocationService {
       'chipsetType': _chipsetType,
       'confidenceLevel': _confidenceLevel,
       'averageSignalStrength': _averageSignalStrength,
+      'hasL5Band': _hasL5Band,
+      'l5BandInfo': _l5BandInfo,
+      'positioningMethod': _positioningMethod,
       'stability': _calculateStability().toStringAsFixed(3),
-      'optimizationLevel': 'ENHANCED',
+      'optimizationLevel': 'ENHANCED_WITH_L5',
       'rawAccuracy': rawAccuracy,
+      'enhancedAccuracy': enhancedAccuracy,
       'enhancementBoost': improvement.toStringAsFixed(1),
       'hardwareConfidence': (_confidenceLevel * 100).toStringAsFixed(1),
       'acquisitionTime': DateTime.now().toIso8601String(),
+      'visibleSystems': _visibleSystems,
+      'satelliteCount': _allSatellites.length,
+      'isRealTimeMonitoring': _isRealTimeMonitoring,
     };
   }
 
   /// Start continuous location updates with optimization
   Stream<EnhancedPosition> getLocationStream() {
     return Geolocator.getPositionStream(
-      locationSettings: LocationSettings(
+      locationSettings: const LocationSettings(
         accuracy: LocationAccuracy.bestForNavigation,
         distanceFilter: 0,
         timeLimit: Duration(seconds: 30),
       ),
-    ).asyncMap((Position position) {
+    ).asyncMap((Position position) async {
       _totalReadings++;
       _updatePerformanceTracking(position.accuracy, position);
+
+      // Update satellite data periodically
+      if (_totalReadings % 5 == 0) {
+        await _updateSatelliteData();
+      }
 
       return _createEnhancedPosition(position);
     });
   }
 
-  /// Real-time satellite update handler
+  /// Enhanced real-time satellite update handler
   void _onSatelliteUpdate(Map<String, dynamic> data) {
-    final updateData = SatelliteUpdateData.fromMap(data);
+    try {
+      // Update system stats
+      if (data['systemStats'] is Map) {
+        _systemStats = (data['systemStats'] as Map).cast<String, dynamic>();
+      }
 
-    _isNavicActive = updateData.isNavicAvailable;
-    _navicSatelliteCount = updateData.navicSatellitesCount;
-    _totalSatelliteCount = updateData.totalSatellites;
-    _navicUsedInFix = updateData.navicUsedInFix;
-    _primarySystem = updateData.primarySystem;
+      _isNavicActive = data['isNavicAvailable'] as bool? ?? false;
+      _navicSatelliteCount = data['navicSatellitesCount'] as int? ?? 0;
+      _totalSatelliteCount = data['totalSatellites'] as int? ?? 0;
+      _navicUsedInFix = data['navicUsedInFix'] as int? ?? 0;
+      _primarySystem = data['primarySystem'] as String? ?? 'GPS';
+      _hasL5Band = data['hasL5Band'] as bool? ?? false;
 
-    // Log only when NavIC satellites detected
-    if (_navicSatelliteCount > 0) {
-      print("🛰️ NavIC Update - Count: $_navicSatelliteCount, "
-            "In Fix: $_navicUsedInFix, Total: $_totalSatelliteCount");
+      // Update positioning method based on current state
+      _updatePositioningMethod();
+
+      // Log enhanced update
+      _logSatelliteUpdate();
+
+    } catch (e) {
+      print("❌ Error processing satellite update: $e");
+    }
+  }
+
+  /// Update positioning method based on current satellite state
+  void _updatePositioningMethod() {
+    if (_isNavicActive && _navicUsedInFix >= 4) {
+      _positioningMethod = "NAVIC_PRIMARY";
+    } else if (_isNavicActive && _navicUsedInFix >= 1) {
+      _positioningMethod = "NAVIC_HYBRID";
+    } else if (_totalSatelliteCount >= 4) {
+      // Check other systems from system stats
+      if (_systemStats.isNotEmpty) {
+        final gpsUsed = (_systemStats['GPS'] as Map<String, dynamic>?)?['used'] as int? ?? 0;
+        final glonassUsed = (_systemStats['GLONASS'] as Map<String, dynamic>?)?['used'] as int? ?? 0;
+        final galileoUsed = (_systemStats['GALILEO'] as Map<String, dynamic>?)?['used'] as int? ?? 0;
+        final beidouUsed = (_systemStats['BEIDOU'] as Map<String, dynamic>?)?['used'] as int? ?? 0;
+
+        if (gpsUsed >= 4) {
+          _positioningMethod = "GPS_PRIMARY";
+        } else if (glonassUsed >= 4) {
+          _positioningMethod = "GLONASS_PRIMARY";
+        } else if (galileoUsed >= 4) {
+          _positioningMethod = "GALILEO_PRIMARY";
+        } else if (beidouUsed >= 4) {
+          _positioningMethod = "BEIDOU_PRIMARY";
+        } else {
+          _positioningMethod = "MULTI_GNSS_HYBRID";
+        }
+      } else {
+        _positioningMethod = "GPS_PRIMARY";
+      }
+    } else {
+      _positioningMethod = "INSUFFICIENT_SATELLITES";
+    }
+  }
+
+  /// Log satellite update
+  void _logSatelliteUpdate() {
+    if (_navicSatelliteCount > 0 || _totalReadings % 10 == 0) {
+      print("\n🛰️ Enhanced Satellite Update:");
+      print("  📡 Total: $_totalSatelliteCount");
+      print("  🇮🇳 NavIC: $_navicSatelliteCount ($_navicUsedInFix in fix)");
+      print("  🎯 Primary: $_primarySystem");
+      print("  📶 L5 Band: ${_hasL5Band ? '✅ Enabled' : '❌ Not Available'}");
+      print("  🎯 Positioning: $_positioningMethod");
+
+      // Log system usage
+      if (_systemStats.isNotEmpty) {
+        print("  📊 System Usage:");
+        for (final entry in _systemStats.entries) {
+          if (entry.value is Map<String, dynamic>) {
+            final system = entry.value as Map<String, dynamic>;
+            final name = system['name'] ?? entry.key;
+            final flag = system['flag'] ?? '🌍';
+            final used = system['used'] ?? 0;
+            final total = system['total'] ?? 0;
+            if (total > 0) {
+              print("    $flag $name: $used/$total in fix");
+            }
+          }
+        }
+      }
     }
   }
 
   /// Start optimized real-time monitoring
   Future<void> startRealTimeMonitoring() async {
-    if (_isRealTimeMonitoring) return;
+    if (_isRealTimeMonitoring) {
+      print("ℹ️ Real-time monitoring already active");
+      return;
+    }
 
     try {
       NavicHardwareService.setSatelliteUpdateCallback(_onSatelliteUpdate);
@@ -378,7 +548,9 @@ class LocationService {
 
       if (result.success) {
         _isRealTimeMonitoring = true;
-        print("🎯 Real-time monitoring started - Enhanced accuracy mode active");
+        _hasL5Band = result.hasL5Band;
+        print("🎯 Enhanced real-time monitoring started");
+        print("  📡 L5 Band: ${_hasL5Band ? '✅ Supported' : '❌ Not Available'}");
       }
     } catch (e) {
       print("❌ Failed to start real-time monitoring: $e");
@@ -387,7 +559,10 @@ class LocationService {
 
   /// Stop real-time monitoring
   Future<void> stopRealTimeMonitoring() async {
-    if (!_isRealTimeMonitoring) return;
+    if (!_isRealTimeMonitoring) {
+      print("ℹ️ Real-time monitoring not active");
+      return;
+    }
 
     try {
       final result = await NavicHardwareService.stopRealTimeDetection();
@@ -478,12 +653,14 @@ class LocationService {
   }
 
   String _generateStatusMessage() {
-    if (!_isNavicSupported) {
-      return "Device hardware does not support NavIC. Using standard GPS.";
-    } else if (!_isNavicActive) {
-      return "Device supports NavIC (${(_confidenceLevel * 100).toStringAsFixed(1)}% confidence), but no NavIC satellites in view.";
+    if (!_isNavicSupported && !_hasL5Band) {
+      return "Device chipset does not support NavIC and also does not have L5 band. Using standard GPS.";
+    } else if (_isNavicSupported && !_hasL5Band) {
+      return "Device chipset supports NavIC but does not have L5 band. Receiving NavIC signals may not be possible.";
+    } else if (_isNavicSupported && _hasL5Band) {
+      return "Device chipset supports NavIC and contains L5 band. NavIC ready for enhanced positioning!";
     } else {
-      return "Device supports NavIC and $_navicSatelliteCount NavIC satellites available ($_navicUsedInFix used in fix).";
+      return "Using standard GPS positioning.";
     }
   }
 
@@ -509,11 +686,26 @@ class LocationService {
       'chipsetType': _chipsetType,
       'confidenceLevel': _confidenceLevel,
       'signalStrength': _averageSignalStrength,
+      'hasL5Band': _hasL5Band,
+      'positioningMethod': _positioningMethod,
+      'l5BandInfo': _l5BandInfo,
+      'systemStats': _systemStats,
       'realTimeMonitoring': _isRealTimeMonitoring,
+      'visibleSatellites': _allSatellites.length,
+      'visibleSystems': _visibleSystems.length,
       'lastHardwareCheck': _lastHardwareCheck?.toIso8601String(),
-      'optimizationMode': 'ENHANCED_NAVIC',
+      'optimizationMode': 'ENHANCED_NAVIC_WITH_L5',
     };
   }
+
+  /// Get all visible satellites
+  List<dynamic> get allSatellites => List.unmodifiable(_allSatellites);
+
+  /// Get visible GNSS systems
+  List<dynamic> get visibleSystems => List.unmodifiable(_visibleSystems);
+
+  /// Get system statistics
+  Map<String, dynamic> get systemStats => Map.unmodifiable(_systemStats);
 
   /// Utility methods
   List<EnhancedPosition> get locationHistory => List.unmodifiable(_locationHistory);
@@ -524,12 +716,15 @@ class LocationService {
     _rawPositions.clear();
     _highAccuracyReadings = 0;
     _bestAccuracy = double.infinity;
-    print("🗑️ Location history cleared");
+    print("🗑️ Enhanced location history cleared");
   }
 
   void dispose() {
     stopRealTimeMonitoring();
-    print("🧹 Location service disposed");
+    _locationHistory.clear();
+    _recentAccuracies.clear();
+    _rawPositions.clear();
+    print("🧹 Enhanced location service disposed");
   }
 
   // Getters for external access
@@ -538,50 +733,8 @@ class LocationService {
   bool get isNavicActive => _isNavicActive;
   String get chipsetType => _chipsetType;
   double get confidenceLevel => _confidenceLevel;
+  bool get hasL5Band => _hasL5Band;
+  String get positioningMethod => _positioningMethod;
   bool get isRealTimeMonitoring => _isRealTimeMonitoring;
-}
-
-// Supporting data class for satellite updates
-class SatelliteUpdateData {
-  final String type;
-  final int timestamp;
-  final int totalSatellites;
-  final Map<String, int> constellations;
-  final List<dynamic> satellites;
-  final List<dynamic> navicSatellites;
-  final bool isNavicAvailable;
-  final int navicSatellitesCount;
-  final int navicUsedInFix;
-  final String primarySystem;
-  final String locationProvider;
-
-  SatelliteUpdateData({
-    required this.type,
-    required this.timestamp,
-    required this.totalSatellites,
-    required this.constellations,
-    required this.satellites,
-    required this.navicSatellites,
-    required this.isNavicAvailable,
-    required this.navicSatellitesCount,
-    required this.navicUsedInFix,
-    required this.primarySystem,
-    required this.locationProvider,
-  });
-
-  factory SatelliteUpdateData.fromMap(Map<String, dynamic> map) {
-    return SatelliteUpdateData(
-      type: map['type'] ?? 'UNKNOWN',
-      timestamp: map['timestamp'] ?? 0,
-      totalSatellites: map['totalSatellites'] ?? 0,
-      constellations: Map<String, int>.from(map['constellations'] ?? {}),
-      satellites: map['satellites'] ?? [],
-      navicSatellites: map['navicSatellites'] ?? [],
-      isNavicAvailable: map['isNavicAvailable'] ?? false,
-      navicSatellitesCount: map['navicSatellites'] ?? 0,
-      navicUsedInFix: map['navicUsedInFix'] ?? 0,
-      primarySystem: map['primarySystem'] ?? 'GPS',
-      locationProvider: map['locationProvider'] ?? 'UNKNOWN',
-    );
-  }
+  Map<String, dynamic> get l5BandInfo => Map.unmodifiable(_l5BandInfo);
 }

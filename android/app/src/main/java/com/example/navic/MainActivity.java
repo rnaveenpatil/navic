@@ -33,20 +33,41 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class MainActivity extends FlutterActivity {
     private static final String CHANNEL = "navic_support";
-    private static final long SATELLITE_DETECTION_TIMEOUT_MS = 25000L; // Reduced from 60s to 25s
+    private static final long SATELLITE_DETECTION_TIMEOUT_MS = 25000L;
     private static final long LOCATION_UPDATE_INTERVAL_MS = 1000L;
     private static final float LOCATION_UPDATE_DISTANCE_M = 0.5f;
-    
-    // Optimized satellite detection parameters
-    private static final float MIN_NAVIC_SIGNAL_STRENGTH = 18.0f; // Minimum CN0 for valid NavIC signal
-    private static final int MIN_NAVIC_SATELLITES_FOR_DETECTION = 1; // Reduced from 2 to 1
-    private static final long EARLY_SUCCESS_DELAY_MS = 8000L; // Early detection after 8 seconds
-    private static final int REQUIRED_CONSECUTIVE_DETECTIONS = 2; // Confirm detection across multiple updates
 
-    // Complete list of NavIC-supported processors (unchanged from previous version)
+    // Optimized satellite detection parameters
+    private static final float MIN_NAVIC_SIGNAL_STRENGTH = 18.0f;
+    private static final int MIN_NAVIC_SATELLITES_FOR_DETECTION = 1;
+    private static final long EARLY_SUCCESS_DELAY_MS = 8000L;
+    private static final int REQUIRED_CONSECUTIVE_DETECTIONS = 2;
+
+    // L5 Frequency Bands (in MHz)
+    private static final Map<String, Double[]> GNSS_FREQUENCIES = new HashMap<String, Double[]>() {{
+        put("GPS", new Double[]{1575.42, 1227.60, 1176.45}); // L1, L2, L5
+        put("GLONASS", new Double[]{1602.00, 1246.00, 1202.025}); // G1, G2, G3
+        put("GALILEO", new Double[]{1575.42, 1207.14, 1176.45}); // E1, E5, E5a
+        put("BEIDOU", new Double[]{1561.098, 1207.14, 1176.45}); // B1, B2, B2a
+        put("IRNSS", new Double[]{1176.45, 2492.028}); // L5, S-band
+        put("QZSS", new Double[]{1575.42, 1227.60, 1176.45}); // L1, L2, L5
+    }};
+
+    // Country flags for each GNSS system
+    private static final Map<String, String> GNSS_COUNTRIES = new HashMap<String, String>() {{
+        put("GPS", "🇺🇸");
+        put("GLONASS", "🇷🇺");
+        put("GALILEO", "🇪🇺");
+        put("BEIDOU", "🇨🇳");
+        put("IRNSS", "🇮🇳");
+        put("QZSS", "🇯🇵");
+        put("SBAS", "🌍");
+    }};
+
+    // Complete list of NavIC-supported processors with L5 capability
     private static final Set<String> QUALCOMM_NAVIC_CHIPSETS = new HashSet<>(Arrays.asList(
             "sm7125", "720g",        // Snapdragon 720G
-            "sm6115", "662",         // Snapdragon 662  
+            "sm6115", "662",         // Snapdragon 662
             "sm4250", "sm4350", "460", // Snapdragon 460
             "sm8250", "865",         // Snapdragon 865
             "sm8250-ac", "870",      // Snapdragon 870
@@ -73,7 +94,6 @@ public class MainActivity extends FlutterActivity {
     ));
 
     private static final Set<String> MEDIATEK_NAVIC_CHIPSETS = new HashSet<>(Arrays.asList(
-            // All L1+L5 GNSS chipsets
             "mt6877", "mt6885", "mt6889", "mt6891", "mt6893", "mt6895", "mt6896", "mt6897",
             "mt6983", "mt6985", "mt6875", "mt6873", "mt6855", "mt6857", "mt6833", "mt6785",
             // Dimensity series
@@ -86,7 +106,7 @@ public class MainActivity extends FlutterActivity {
 
     private static final Set<String> SAMSUNG_NAVIC_CHIPSETS = new HashSet<>(Arrays.asList(
             "s5e8825", "1280",      // Exynos 1280
-            "s5e8835", "1380",      // Exynos 1380  
+            "s5e8835", "1380",      // Exynos 1380
             "s5e8845", "1480",      // Exynos 1480
             "s5e9925", "2200"       // Exynos 2200
     ));
@@ -98,10 +118,12 @@ public class MainActivity extends FlutterActivity {
     private boolean isTrackingLocation = false;
     private MethodChannel methodChannel;
 
-    // Optimized satellite detection tracking
-    private final Map<Integer, NavicSatellite> detectedNavicSatellites = new ConcurrentHashMap<>();
+    // Satellite tracking
+    private final Map<Integer, EnhancedSatellite> detectedSatellites = new ConcurrentHashMap<>();
+    private final Map<String, List<EnhancedSatellite>> satellitesBySystem = new ConcurrentHashMap<>();
     private final AtomicInteger consecutiveNavicDetections = new AtomicInteger(0);
     private final AtomicBoolean navicDetectionCompleted = new AtomicBoolean(false);
+    private boolean hasL5BandSupport = false;
 
     @Override
     public void configureFlutterEngine(@NonNull FlutterEngine flutterEngine) {
@@ -134,6 +156,9 @@ public class MainActivity extends FlutterActivity {
                     break;
                 case "stopLocationUpdates":
                     stopLocationUpdates(result);
+                    break;
+                case "getAllSatellites":
+                    getAllSatellites(result);
                     break;
                 default:
                     Log.w("NavIC", "Unknown method: " + call.method);
@@ -168,7 +193,7 @@ public class MainActivity extends FlutterActivity {
     }
 
     private void checkNavicHardwareSupport(MethodChannel.Result result) {
-        Log.d("NavIC", "Starting optimized NavIC hardware and satellite detection");
+        Log.d("NavIC", "Starting enhanced NavIC hardware and satellite detection");
 
         if (!hasLocationPermissions()) {
             result.error("PERMISSION_DENIED", "Location permissions required", null);
@@ -176,10 +201,16 @@ public class MainActivity extends FlutterActivity {
         }
 
         handler.post(() -> {
+            // Step 1: Hardware chipset detection
             HardwareDetectionResult hardwareResult = detectNavicHardwareChipsetOnly();
 
-            detectNavicSatellitesOptimized(hardwareResult, (navicDetected, navicCount, totalSatellites,
-                                                           usedInFixCount, signalStrength, satelliteDetails, acquisitionTime) -> {
+            // Step 2: L5 Band Detection
+            L5BandResult l5Result = detectL5BandSupport();
+
+            // Step 3: Enhanced satellite detection
+            detectEnhancedSatellites(hardwareResult, l5Result, (navicDetected, navicCount, totalSatellites,
+                                                                usedInFixCount, signalStrength, satelliteDetails, acquisitionTime,
+                                                                allSatellites, l5Enabled) -> {
 
                 Map<String, Object> response = new HashMap<>();
                 response.put("isSupported", hardwareResult.isSupported);
@@ -194,47 +225,123 @@ public class MainActivity extends FlutterActivity {
                 response.put("acquisitionTimeMs", acquisitionTime);
                 response.put("chipsetType", hardwareResult.chipsetType);
                 response.put("verificationMethods", hardwareResult.verificationMethods);
+                response.put("hasL5Band", l5Enabled);
+                response.put("l5BandInfo", l5Result.toMap());
+                response.put("allSatellites", allSatellites);
 
-                String message;
-                if (!hardwareResult.isSupported) {
-                    message = "Device chipset does not support NavIC. Using standard GPS.";
-                } else {
-                    if (navicDetected) {
-                        message = String.format(
-                                "✅ Chipset supports NavIC and %d NavIC satellites detected (%d used in fix). " +
-                                        "Signal: %.1f dB-Hz, Acquisition: %d ms",
-                                navicCount, usedInFixCount, signalStrength, acquisitionTime
-                        );
-                    } else {
-                        message = String.format(
-                                "⚠️ Chipset supports NavIC, but no NavIC satellites acquired in %d seconds.",
-                                acquisitionTime / 1000
-                        );
-                    }
-                }
+                // Calculate positioning method
+                String positioningMethod = determinePositioningMethod(navicDetected, usedInFixCount, allSatellites);
+                response.put("positioningMethod", positioningMethod);
+
+                String message = generateDetectionMessage(hardwareResult, navicDetected, navicCount,
+                        usedInFixCount, signalStrength, acquisitionTime, l5Enabled);
                 response.put("message", message);
 
-                Log.d("NavIC", "Optimized detection completed: " + message);
+                Log.d("NavIC", "Enhanced detection completed: " + message);
                 result.success(response);
             });
         });
     }
 
     /**
-     * OPTIMIZED SATELLITE DETECTION - Faster and more reliable NavIC detection
+     * L5 BAND DETECTION - Check if device supports L5 frequency
      */
-    private void detectNavicSatellitesOptimized(HardwareDetectionResult hardwareResult,
-                                               EnhancedSatelliteDetectionCallback cb) {
+    private L5BandResult detectL5BandSupport() {
+        Log.d("NavIC", "Starting L5 band detection");
+        L5BandResult result = new L5BandResult();
+
+        try {
+            // Method 1: Check GNSS capabilities for L5 support
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                Object gnssCaps = locationManager.getGnssCapabilities();
+                if (gnssCaps != null) {
+                    try {
+                        // Check L5 capability
+                        Method hasL5Method = gnssCaps.getClass().getMethod("hasL5");
+                        Object ret = hasL5Method.invoke(gnssCaps);
+                        if (ret instanceof Boolean) {
+                            boolean hasL5 = (Boolean) ret;
+                            result.hasL5Support = hasL5;
+                            result.detectionMethods.add("GNSS_CAPABILITIES_L5");
+                            result.confidence = hasL5 ? 0.95 : 0.3;
+
+                            if (hasL5) {
+                                Log.d("NavIC", "✅ Device supports L5 band via GNSS Capabilities");
+                            } else {
+                                Log.d("NavIC", "❌ GNSS Capabilities reports no L5 support");
+                            }
+                        }
+                    } catch (NoSuchMethodException e) {
+                        Log.d("NavIC", "GNSSCapabilities.hasL5() not available");
+                    }
+                }
+            }
+
+            // Method 2: Check chipset for L5 capability
+            String chipsetInfo = getChipsetInfo().toLowerCase();
+            if (chipsetInfo.contains("l5") || chipsetInfo.contains("dual") || chipsetInfo.contains("multi")) {
+                result.hasL5Support = true;
+                result.detectionMethods.add("CHIPSET_L5_INDICATOR");
+                result.confidence = Math.max(result.confidence, 0.85);
+                Log.d("NavIC", "✅ Chipset indicates L5 support");
+            }
+
+            // Method 3: Check system properties
+            try {
+                Class<?> systemPropsClass = Class.forName("android.os.SystemProperties");
+                Method getMethod = systemPropsClass.getMethod("get", String.class, String.class);
+
+                String[] l5Properties = {
+                        "ro.gnss.l5.support",
+                        "persist.vendor.gnss.l5",
+                        "ro.hardware.gnss.l5",
+                        "vendor.gnss.l5.enabled"
+                };
+
+                for (String prop : l5Properties) {
+                    String value = (String) getMethod.invoke(null, prop, "");
+                    if (value.equalsIgnoreCase("true") || value.equalsIgnoreCase("1")) {
+                        result.hasL5Support = true;
+                        result.detectionMethods.add("SYSTEM_PROPERTY_L5");
+                        result.confidence = Math.max(result.confidence, 0.9);
+                        Log.d("NavIC", "✅ System property indicates L5 support: " + prop);
+                        break;
+                    }
+                }
+            } catch (Exception e) {
+                Log.d("NavIC", "Could not access system properties for L5 detection");
+            }
+
+            // Set final result
+            hasL5BandSupport = result.hasL5Support;
+            result.confidence = Math.min(Math.max(result.confidence, 0.0), 1.0);
+
+            Log.d("NavIC", String.format("L5 Detection: Supported=%s, Confidence=%.2f, Methods=%s",
+                    result.hasL5Support, result.confidence, result.detectionMethods));
+
+        } catch (Exception e) {
+            Log.e("NavIC", "Error in L5 band detection", e);
+        }
+
+        return result;
+    }
+
+    /**
+     * ENHANCED SATELLITE DETECTION - Detect all GNSS satellites with detailed info
+     */
+    private void detectEnhancedSatellites(HardwareDetectionResult hardwareResult, L5BandResult l5Result,
+                                          EnhancedSatelliteDetectionCallback cb) {
         // Reset detection state
-        detectedNavicSatellites.clear();
+        detectedSatellites.clear();
+        satellitesBySystem.clear();
         consecutiveNavicDetections.set(0);
         navicDetectionCompleted.set(false);
-        
+
         final long startTime = System.currentTimeMillis();
         final AtomicInteger detectionAttempts = new AtomicInteger(0);
 
-        Log.d("NavIC", "🚀 Starting optimized NavIC satellite detection (Timeout: " + 
-              SATELLITE_DETECTION_TIMEOUT_MS/1000 + "s)");
+        Log.d("NavIC", "🚀 Starting enhanced satellite detection (Timeout: " +
+                SATELLITE_DETECTION_TIMEOUT_MS/1000 + "s, L5: " + l5Result.hasL5Support + ")");
 
         try {
             final GnssStatus.Callback[] callbackRef = new GnssStatus.Callback[1];
@@ -242,63 +349,63 @@ public class MainActivity extends FlutterActivity {
                 @Override
                 public void onSatelliteStatusChanged(GnssStatus status) {
                     if (navicDetectionCompleted.get()) return;
-                    
+
                     detectionAttempts.incrementAndGet();
                     long currentTime = System.currentTimeMillis();
                     long elapsedTime = currentTime - startTime;
 
-                    // Process satellite data with optimized logic
-                    SatelliteScanResult scanResult = processSatellitesOptimized(status, elapsedTime);
-                    
-                    // Early success conditions
+                    // Process ALL satellites with enhanced information
+                    EnhancedSatelliteScanResult scanResult = processAllSatellites(status, elapsedTime, l5Result.hasL5Support);
+
+                    // Update tracking
+                    detectedSatellites.putAll(scanResult.allSatellites);
+                    satellitesBySystem.putAll(scanResult.satellitesBySystem);
+
+                    // NavIC-specific detection logic
                     if (scanResult.navicCount >= MIN_NAVIC_SATELLITES_FOR_DETECTION) {
                         consecutiveNavicDetections.incrementAndGet();
-                        
+
                         // Quick success for strong signals
-                        if (scanResult.navicCount >= 2 && scanResult.averageSignalStrength > 25.0f) {
-                            completeDetection(true, scanResult, elapsedTime, cb, callbackRef[0]);
+                        if (scanResult.navicCount >= 2 && scanResult.navicSignalStrength > 25.0f) {
+                            completeEnhancedDetection(true, scanResult, elapsedTime, cb, callbackRef[0]);
                             return;
                         }
-                        
+
                         // Success with consecutive detections
                         if (consecutiveNavicDetections.get() >= REQUIRED_CONSECUTIVE_DETECTIONS) {
-                            completeDetection(true, scanResult, elapsedTime, cb, callbackRef[0]);
+                            completeEnhancedDetection(true, scanResult, elapsedTime, cb, callbackRef[0]);
                             return;
                         }
                     } else {
                         consecutiveNavicDetections.set(0); // Reset if no NavIC detected
                     }
 
-                    // Log progress periodically (less frequent to reduce overhead)
+                    // Log progress
                     if (detectionAttempts.get() % 5 == 0) {
-                        Log.d("NavIC", String.format(
-                                "📡 Scan %d - Time: %d/%d ms, NavIC: %d (%d in fix), Signal: %.1f dB-Hz",
-                                detectionAttempts.get(), elapsedTime, SATELLITE_DETECTION_TIMEOUT_MS,
-                                scanResult.navicCount, scanResult.usedInFix, scanResult.averageSignalStrength
-                        ));
+                        logSatelliteStatus(scanResult, elapsedTime, detectionAttempts.get());
                     }
                 }
 
                 @Override
                 public void onStarted() {
-                    Log.d("NavIC", "🛰️ Optimized GNSS monitoring started");
+                    Log.d("NavIC", "🛰️ Enhanced GNSS monitoring started");
                 }
 
                 @Override
                 public void onStopped() {
-                    Log.d("NavIC", "🛰️ Optimized GNSS monitoring stopped");
+                    Log.d("NavIC", "🛰️ Enhanced GNSS monitoring stopped");
                 }
             };
 
             locationManager.registerGnssStatusCallback(callbackRef[0], handler);
 
-            // Early success timer - check quickly if NavIC is available
+            // Early success timer
             handler.postDelayed(() -> {
-                if (!navicDetectionCompleted.get() && !detectedNavicSatellites.isEmpty()) {
-                    SatelliteScanResult earlyResult = getCurrentScanResult();
+                if (!navicDetectionCompleted.get()) {
+                    EnhancedSatelliteScanResult earlyResult = getCurrentEnhancedScanResult(l5Result.hasL5Support);
                     if (earlyResult.navicCount > 0) {
                         Log.d("NavIC", "🎯 Early detection - NavIC satellites found quickly");
-                        completeDetection(true, earlyResult, EARLY_SUCCESS_DELAY_MS, cb, callbackRef[0]);
+                        completeEnhancedDetection(true, earlyResult, EARLY_SUCCESS_DELAY_MS, cb, callbackRef[0]);
                         return;
                     }
                 }
@@ -308,146 +415,361 @@ public class MainActivity extends FlutterActivity {
             handler.postDelayed(() -> {
                 if (!navicDetectionCompleted.get()) {
                     Log.d("NavIC", "⏰ Detection timeout reached");
-                    SatelliteScanResult finalResult = getCurrentScanResult();
-                    completeDetection(finalResult.navicCount > 0, finalResult, 
-                                    SATELLITE_DETECTION_TIMEOUT_MS, cb, callbackRef[0]);
+                    EnhancedSatelliteScanResult finalResult = getCurrentEnhancedScanResult(l5Result.hasL5Support);
+                    completeEnhancedDetection(finalResult.navicCount > 0, finalResult,
+                            SATELLITE_DETECTION_TIMEOUT_MS, cb, callbackRef[0]);
                 }
             }, SATELLITE_DETECTION_TIMEOUT_MS);
 
         } catch (SecurityException se) {
             Log.e("NavIC", "🔒 Location permission denied for satellite detection");
-            cb.onResult(false, 0, 0, 0, 0.0, new ArrayList<>(), 0);
+            cb.onResult(false, 0, 0, 0, 0.0, new ArrayList<>(), 0, new ArrayList<>(), l5Result.hasL5Support);
         } catch (Exception e) {
             Log.e("NavIC", "❌ Failed to register GNSS callback", e);
-            cb.onResult(false, 0, 0, 0, 0.0, new ArrayList<>(), 0);
+            cb.onResult(false, 0, 0, 0, 0.0, new ArrayList<>(), 0, new ArrayList<>(), l5Result.hasL5Support);
         }
     }
 
     /**
-     * Optimized satellite processing - focused on NavIC detection
+     * Process ALL GNSS satellites with enhanced information
      */
-    private SatelliteScanResult processSatellitesOptimized(GnssStatus status, long elapsedTime) {
+    private EnhancedSatelliteScanResult processAllSatellites(GnssStatus status, long elapsedTime, boolean hasL5Support) {
+        Map<Integer, EnhancedSatellite> allSats = new ConcurrentHashMap<>();
+        Map<String, List<EnhancedSatellite>> satsBySystem = new ConcurrentHashMap<>();
+
         int navicCount = 0;
-        int usedInFix = 0;
-        double totalSignalStrength = 0.0;
-        int satellitesWithSignal = 0;
-        List<Map<String, Object>> satelliteDetails = new ArrayList<>();
+        int navicUsedInFix = 0;
+        float navicTotalSignal = 0;
+        int navicWithSignal = 0;
 
-        for (int i = 0; i < status.getSatelliteCount(); i++) {
+        int totalSatellites = status.getSatelliteCount();
+        List<Map<String, Object>> navicDetails = new ArrayList<>();
+
+        for (int i = 0; i < totalSatellites; i++) {
             int constellation = status.getConstellationType(i);
-            
-            // Focus primarily on IRNSS constellation
-            if (constellation == GnssStatus.CONSTELLATION_IRNSS) {
-                int svid = status.getSvid(i);
-                float cn0 = status.getCn0DbHz(i);
-                boolean used = status.usedInFix(i);
-                
-                // Validate NavIC satellite (SVID 1-14)
-                if (svid >= 1 && svid <= 14 && cn0 >= MIN_NAVIC_SIGNAL_STRENGTH) {
-                    navicCount++;
-                    if (used) usedInFix++;
-                    
-                    if (cn0 > 0) {
-                        totalSignalStrength += cn0;
-                        satellitesWithSignal++;
-                    }
+            String systemName = getConstellationName(constellation);
+            String countryFlag = GNSS_COUNTRIES.getOrDefault(systemName, "🌍");
 
-                    // Track satellite for better detection consistency
-                    trackNavicSatellite(svid, cn0, used, elapsedTime);
+            int svid = status.getSvid(i);
+            float cn0 = status.getCn0DbHz(i);
+            boolean used = status.usedInFix(i);
+            float elevation = status.getElevationDegrees(i);
+            float azimuth = status.getAzimuthDegrees(i);
+            boolean hasEphemeris = status.hasEphemerisData(i);
+            boolean hasAlmanac = status.hasAlmanacData(i);
 
-                    // Create satellite details
-                    Map<String, Object> satInfo = createSatelliteInfo(status, i, constellation);
-                    satelliteDetails.add(satInfo);
+            // Determine frequency band
+            String frequencyBand = determineFrequencyBand(constellation, status, i, hasL5Support);
 
-                    // Log new satellite detection
-                    if (!detectedNavicSatellites.containsKey(svid)) {
-                        Log.d("NavIC", String.format(
-                                "✅ NavIC SVID-%d - CN0: %.1f dB-Hz, Used: %s",
-                                svid, cn0, used
-                        ));
-                    }
+            // Create enhanced satellite object
+            EnhancedSatellite satellite = new EnhancedSatellite(
+                    svid,
+                    systemName,
+                    constellation,
+                    countryFlag,
+                    cn0,
+                    used,
+                    elevation,
+                    azimuth,
+                    hasEphemeris,
+                    hasAlmanac,
+                    frequencyBand,
+                    elapsedTime
+            );
+
+            // Add to collections - Use satellite.hashCode() as key since getKey() returns String
+            allSats.put(satellite.hashCode(), satellite);
+
+            if (!satsBySystem.containsKey(systemName)) {
+                satsBySystem.put(systemName, new ArrayList<>());
+            }
+            satsBySystem.get(systemName).add(satellite);
+
+            // NavIC-specific tracking
+            if (constellation == GnssStatus.CONSTELLATION_IRNSS &&
+                    svid >= 1 && svid <= 14 && cn0 >= MIN_NAVIC_SIGNAL_STRENGTH) {
+                navicCount++;
+                if (used) navicUsedInFix++;
+                if (cn0 > 0) {
+                    navicTotalSignal += cn0;
+                    navicWithSignal++;
+                }
+
+                Map<String, Object> satInfo = satellite.toDetailedMap();
+                navicDetails.add(satInfo);
+
+                if (!detectedSatellites.containsKey(satellite.hashCode())) {
+                    Log.d("NavIC", String.format(
+                            "✅ NavIC %s SVID-%d - CN0: %.1f dB-Hz, Band: %s, Used: %s",
+                            countryFlag, svid, cn0, frequencyBand, used
+                    ));
+                }
+            } else if (cn0 > 0) {
+                // Log other strong satellites
+                if (!detectedSatellites.containsKey(satellite.hashCode())) {
+                    Log.v("NavIC", String.format(
+                            "📡 %s %s SVID-%d - CN0: %.1f dB-Hz, Band: %s, Used: %s",
+                            countryFlag, systemName, svid, cn0, frequencyBand, used
+                    ));
                 }
             }
         }
 
-        double averageSignal = satellitesWithSignal > 0 ? totalSignalStrength / satellitesWithSignal : 0.0;
-        
-        return new SatelliteScanResult(navicCount, usedInFix, status.getSatelliteCount(), 
-                                     averageSignal, satelliteDetails);
+        float navicAvgSignal = navicWithSignal > 0 ? navicTotalSignal / navicWithSignal : 0.0f;
+
+        return new EnhancedSatelliteScanResult(
+                navicCount, navicUsedInFix, totalSatellites, navicAvgSignal,
+                navicDetails, allSats, satsBySystem
+        );
     }
 
     /**
-     * Track NavIC satellites for consistent detection
+     * Determine frequency band of satellite
      */
-    private void trackNavicSatellite(int svid, float cn0, boolean usedInFix, long timestamp) {
-        NavicSatellite sat = detectedNavicSatellites.get(svid);
-        if (sat == null) {
-            sat = new NavicSatellite(svid);
-            detectedNavicSatellites.put(svid, sat);
-        }
-        sat.update(cn0, usedInFix, timestamp);
-    }
-
-    private SatelliteScanResult getCurrentScanResult() {
-        int navicCount = detectedNavicSatellites.size();
-        int usedInFix = 0;
-        double totalSignal = 0.0;
-        int satsWithSignal = 0;
-        List<Map<String, Object>> details = new ArrayList<>();
-
-        for (NavicSatellite sat : detectedNavicSatellites.values()) {
-            if (sat.usedInFix) usedInFix++;
-            if (sat.lastCn0 > 0) {
-                totalSignal += sat.lastCn0;
-                satsWithSignal++;
-            }
-            details.add(sat.toMap());
-        }
-
-        double avgSignal = satsWithSignal > 0 ? totalSignal / satsWithSignal : 0.0;
-        return new SatelliteScanResult(navicCount, usedInFix, 0, avgSignal, details);
-    }
-
-    private void completeDetection(boolean detected, SatelliteScanResult result, 
-                                 long elapsedTime, EnhancedSatelliteDetectionCallback cb,
-                                 GnssStatus.Callback callback) {
-        if (navicDetectionCompleted.compareAndSet(false, true)) {
-            cleanupCallback(callback);
-            
-            Log.d("NavIC", String.format(
-                    "🎯 Detection %s - NavIC: %d satellites (%d in fix), Signal: %.1f dB-Hz, Time: %d ms",
-                    detected ? "SUCCESS" : "FAILED", 
-                    result.navicCount, result.usedInFix, result.averageSignalStrength, elapsedTime
-            ));
-            
-            cb.onResult(detected, result.navicCount, result.totalSatellites, 
-                       result.usedInFix, result.averageSignalStrength, 
-                       result.satelliteDetails, elapsedTime);
-        }
-    }
-
-    private Map<String, Object> createSatelliteInfo(GnssStatus status, int index, int constellation) {
-        Map<String, Object> satInfo = new HashMap<>();
-        satInfo.put("constellation", getConstellationName(constellation));
-        satInfo.put("svid", status.getSvid(index));
-        satInfo.put("cn0DbHz", status.getCn0DbHz(index));
-        satInfo.put("elevation", status.getElevationDegrees(index));
-        satInfo.put("azimuth", status.getAzimuthDegrees(index));
-        satInfo.put("usedInFix", status.usedInFix(index));
-        satInfo.put("hasEphemeris", status.hasEphemerisData(index));
-        satInfo.put("hasAlmanac", status.hasAlmanacData(index));
+    private String determineFrequencyBand(int constellation, GnssStatus status, int index, boolean hasL5Support) {
+        String band = "Unknown";
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             try {
                 float carrierFreq = status.getCarrierFrequencyHz(index);
-                satInfo.put("carrierFrequencyHz", carrierFreq);
-            } catch (Throwable ignored) {}
+                if (carrierFreq > 0) {
+                    if (Math.abs(carrierFreq - 1176.45e6) < 5e6) { // L5/E5a/B2a frequency
+                        band = "L5";
+                    } else if (Math.abs(carrierFreq - 1575.42e6) < 5e6) { // L1/E1/B1 frequency
+                        band = "L1";
+                    } else if (Math.abs(carrierFreq - 1227.60e6) < 5e6) { // L2 frequency
+                        band = "L2";
+                    } else if (Math.abs(carrierFreq - 2492.028e6) < 5e6) { // NavIC S-band
+                        band = "S";
+                    } else {
+                        band = String.format("%.0f MHz", carrierFreq / 1e6);
+                    }
+                }
+            } catch (Exception e) {
+                // Use default band based on constellation
+                band = getDefaultBandForConstellation(constellation, hasL5Support);
+            }
+        } else {
+            band = getDefaultBandForConstellation(constellation, hasL5Support);
         }
 
-        return satInfo;
+        return band;
     }
 
-    // Hardware detection methods remain unchanged from previous version
+    private String getDefaultBandForConstellation(int constellation, boolean hasL5Support) {
+        switch (constellation) {
+            case GnssStatus.CONSTELLATION_IRNSS:
+                return hasL5Support ? "L5/S" : "L5";
+            case GnssStatus.CONSTELLATION_GPS:
+                return hasL5Support ? "L1/L5" : "L1";
+            case GnssStatus.CONSTELLATION_GALILEO:
+                return hasL5Support ? "E1/E5a" : "E1";
+            case GnssStatus.CONSTELLATION_BEIDOU:
+                return hasL5Support ? "B1/B2a" : "B1";
+            case GnssStatus.CONSTELLATION_GLONASS:
+                return "G1";
+            case GnssStatus.CONSTELLATION_QZSS:
+                return hasL5Support ? "L1/L5" : "L1";
+            default:
+                return "L1";
+        }
+    }
+
+    private EnhancedSatelliteScanResult getCurrentEnhancedScanResult(boolean hasL5Support) {
+        int navicCount = 0;
+        int navicUsedInFix = 0;
+        float navicTotalSignal = 0;
+        int navicWithSignal = 0;
+        List<Map<String, Object>> navicDetails = new ArrayList<>();
+
+        Map<String, List<EnhancedSatellite>> satsBySystem = new HashMap<>();
+
+        for (EnhancedSatellite sat : detectedSatellites.values()) {
+            String systemName = sat.systemName;
+
+            if (!satsBySystem.containsKey(systemName)) {
+                satsBySystem.put(systemName, new ArrayList<>());
+            }
+            satsBySystem.get(systemName).add(sat);
+
+            if ("IRNSS".equals(systemName) && sat.cn0 >= MIN_NAVIC_SIGNAL_STRENGTH) {
+                navicCount++;
+                if (sat.usedInFix) navicUsedInFix++;
+                if (sat.cn0 > 0) {
+                    navicTotalSignal += sat.cn0;
+                    navicWithSignal++;
+                }
+                navicDetails.add(sat.toDetailedMap());
+            }
+        }
+
+        float navicAvgSignal = navicWithSignal > 0 ? navicTotalSignal / navicWithSignal : 0.0f;
+        int totalSatellites = detectedSatellites.size();
+
+        return new EnhancedSatelliteScanResult(
+                navicCount, navicUsedInFix, totalSatellites, navicAvgSignal,
+                navicDetails, detectedSatellites, satsBySystem
+        );
+    }
+
+    private void completeEnhancedDetection(boolean detected, EnhancedSatelliteScanResult result,
+                                           long elapsedTime, EnhancedSatelliteDetectionCallback cb,
+                                           GnssStatus.Callback callback) {
+        if (navicDetectionCompleted.compareAndSet(false, true)) {
+            cleanupCallback(callback);
+
+            // Convert all satellites to map format
+            List<Map<String, Object>> allSatellitesList = new ArrayList<>();
+            for (EnhancedSatellite sat : result.allSatellites.values()) {
+                allSatellitesList.add(sat.toDetailedMap());
+            }
+
+            Log.d("NavIC", String.format(
+                    "🎯 Enhanced Detection %s - NavIC: %d satellites (%d in fix), " +
+                            "Total Systems: %d, Total Sats: %d, Time: %d ms",
+                    detected ? "SUCCESS" : "FAILED",
+                    result.navicCount, result.navicUsedInFix,
+                    result.satellitesBySystem.size(), result.totalSatellites, elapsedTime
+            ));
+
+            cb.onResult(detected, result.navicCount, result.totalSatellites,
+                    result.navicUsedInFix, result.navicSignalStrength,
+                    result.navicDetails, elapsedTime, allSatellitesList, hasL5BandSupport);
+        }
+    }
+
+    private void logSatelliteStatus(EnhancedSatelliteScanResult result, long elapsedTime, int attempt) {
+        StringBuilder logMsg = new StringBuilder();
+        logMsg.append(String.format("📡 Scan %d - Time: %d/%d ms\n",
+                attempt, elapsedTime, SATELLITE_DETECTION_TIMEOUT_MS));
+        logMsg.append(String.format("NavIC: %d (%d in fix), Signal: %.1f dB-Hz\n",
+                result.navicCount, result.navicUsedInFix, result.navicSignalStrength));
+
+        for (Map.Entry<String, List<EnhancedSatellite>> entry : result.satellitesBySystem.entrySet()) {
+            int systemCount = entry.getValue().size();
+            int usedInFix = 0;
+            for (EnhancedSatellite sat : entry.getValue()) {
+                if (sat.usedInFix) usedInFix++;
+            }
+            logMsg.append(String.format("%s: %d (%d in fix) ",
+                    entry.getKey(), systemCount, usedInFix));
+        }
+
+        Log.d("NavIC", logMsg.toString());
+    }
+
+    /**
+     * Get all satellites in view (real-time)
+     */
+    private void getAllSatellites(MethodChannel.Result result) {
+        if (!hasLocationPermissions()) {
+            result.error("PERMISSION_DENIED", "Location permissions required", null);
+            return;
+        }
+
+        List<Map<String, Object>> allSatellites = new ArrayList<>();
+        Map<String, Object> systems = new HashMap<>();
+
+        for (EnhancedSatellite sat : detectedSatellites.values()) {
+            allSatellites.add(sat.toDetailedMap());
+
+            String system = sat.systemName;
+            if (!systems.containsKey(system)) {
+                Map<String, Object> systemInfo = new HashMap<>();
+                systemInfo.put("flag", sat.countryFlag);
+                systemInfo.put("name", system);
+                systemInfo.put("count", 0);
+                systemInfo.put("used", 0);
+                systems.put(system, systemInfo);
+            }
+
+            Map<String, Object> systemInfo = (Map<String, Object>) systems.get(system);
+            systemInfo.put("count", (Integer) systemInfo.get("count") + 1);
+            if (sat.usedInFix) {
+                systemInfo.put("used", (Integer) systemInfo.get("used") + 1);
+            }
+        }
+
+        Map<String, Object> response = new HashMap<>();
+        response.put("satellites", allSatellites);
+        response.put("systems", new ArrayList<>(systems.values()));
+        response.put("totalSatellites", allSatellites.size());
+        response.put("hasL5Band", hasL5BandSupport);
+        response.put("timestamp", System.currentTimeMillis());
+
+        result.success(response);
+    }
+
+    /**
+     * Determine positioning method based on available satellites
+     */
+    private String determinePositioningMethod(boolean navicDetected, int navicUsedInFix,
+                                              List<Map<String, Object>> allSatellites) {
+        if (navicDetected && navicUsedInFix >= 4) {
+            return "NAVIC_PRIMARY";
+        } else if (navicDetected && navicUsedInFix >= 1) {
+            return "NAVIC_HYBRID";
+        }
+
+        // Count satellites from other systems
+        Map<String, Integer> systemCounts = new HashMap<>();
+        for (Map<String, Object> sat : allSatellites) {
+            String system = (String) sat.get("system");
+            boolean used = (Boolean) sat.get("usedInFix");
+            if (used) {
+                systemCounts.put(system, systemCounts.getOrDefault(system, 0) + 1);
+            }
+        }
+
+        // Check which system has enough satellites for positioning
+        for (Map.Entry<String, Integer> entry : systemCounts.entrySet()) {
+            if (entry.getValue() >= 4) {
+                return entry.getKey() + "_PRIMARY";
+            }
+        }
+
+        // Check for hybrid positioning
+        int totalUsed = 0;
+        for (Integer count : systemCounts.values()) {
+            totalUsed += count;
+        }
+
+        if (totalUsed >= 4) {
+            return "MULTI_GNSS_HYBRID";
+        }
+
+        return "INSUFFICIENT_SATELLITES";
+    }
+
+    private String generateDetectionMessage(HardwareDetectionResult hardwareResult, boolean navicDetected,
+                                            int navicCount, int usedInFix, double signalStrength,
+                                            long acquisitionTime, boolean l5Enabled) {
+        StringBuilder message = new StringBuilder();
+
+        if (!hardwareResult.isSupported) {
+            message.append("Device chipset does not support NavIC. Using standard GPS.");
+        } else {
+            if (navicDetected) {
+                message.append(String.format(
+                        "✅ Chipset supports NavIC and %d NavIC satellites detected (%d used in fix). " +
+                                "Signal: %.1f dB-Hz, Acquisition: %d ms",
+                        navicCount, usedInFix, signalStrength, acquisitionTime
+                ));
+                if (l5Enabled) {
+                    message.append(" (L5 Band Enabled)");
+                }
+            } else {
+                message.append(String.format(
+                        "⚠️ Chipset supports NavIC, but no NavIC satellites acquired in %d seconds.",
+                        acquisitionTime / 1000
+                ));
+            }
+        }
+
+        return message.toString();
+    }
+
+    // Hardware detection methods
     private HardwareDetectionResult detectNavicHardwareChipsetOnly() {
         Log.d("NavIC", "Starting chipset-only NavIC hardware detection");
 
@@ -722,9 +1044,6 @@ public class MainActivity extends FlutterActivity {
         return new GnssFeaturesResult(false, 0.0, "BASIC_GNSS_ONLY");
     }
 
-    // Rest of the methods remain unchanged (getGnssCapabilities, startRealTimeNavicDetection, etc.)
-    // ... [Previous implementation of other methods]
-
     private void getGnssCapabilities(MethodChannel.Result result) {
         Log.d("NavIC", "Getting GNSS capabilities");
         Map<String, Object> caps = new HashMap<>();
@@ -813,6 +1132,7 @@ public class MainActivity extends FlutterActivity {
             Map<String, Object> resp = new HashMap<>();
             resp.put("success", true);
             resp.put("message", "Real-time NavIC detection started");
+            resp.put("hasL5Band", hasL5BandSupport);
             Log.d("NavIC", "Real-time detection started successfully");
             result.success(resp);
         } catch (SecurityException se) {
@@ -825,49 +1145,70 @@ public class MainActivity extends FlutterActivity {
     }
 
     private Map<String, Object> processEnhancedSatelliteData(GnssStatus status) {
-        Map<String, Integer> constellations = new HashMap<>();
+        Map<String, Object> constellations = new HashMap<>();
         List<Map<String, Object>> satellites = new ArrayList<>();
         List<Map<String, Object>> navicSatellites = new ArrayList<>();
+
+        Map<String, Object> systemStats = new HashMap<>();
 
         int irnssCount = 0;
         int gpsCount = 0;
         int glonassCount = 0;
         int galileoCount = 0;
         int beidouCount = 0;
-        int otherCount = 0;
+        int qzssCount = 0;
+        int sbasCount = 0;
         int irnssUsedInFix = 0;
+        int gpsUsedInFix = 0;
+        int glonassUsedInFix = 0;
+        int galileoUsedInFix = 0;
+        int beidouUsedInFix = 0;
 
         for (int i = 0; i < status.getSatelliteCount(); i++) {
             int constellationType = status.getConstellationType(i);
-            String constellationName;
+            String constellationName = getConstellationName(constellationType);
+            String countryFlag = GNSS_COUNTRIES.getOrDefault(constellationName, "🌍");
 
+            int svid = status.getSvid(i);
+            float cn0 = status.getCn0DbHz(i);
+            boolean used = status.usedInFix(i);
+            float elevation = status.getElevationDegrees(i);
+            float azimuth = status.getAzimuthDegrees(i);
+
+            // Update counts
             switch (constellationType) {
                 case GnssStatus.CONSTELLATION_IRNSS:
-                    constellationName = "IRNSS";
                     irnssCount++;
-                    if (status.usedInFix(i)) irnssUsedInFix++;
+                    if (used) irnssUsedInFix++;
                     break;
                 case GnssStatus.CONSTELLATION_GPS:
-                    constellationName = "GPS"; gpsCount++; break;
+                    gpsCount++; if (used) gpsUsedInFix++; break;
                 case GnssStatus.CONSTELLATION_GLONASS:
-                    constellationName = "GLONASS"; glonassCount++; break;
+                    glonassCount++; if (used) glonassUsedInFix++; break;
                 case GnssStatus.CONSTELLATION_GALILEO:
-                    constellationName = "GALILEO"; galileoCount++; break;
+                    galileoCount++; if (used) galileoUsedInFix++; break;
                 case GnssStatus.CONSTELLATION_BEIDOU:
-                    constellationName = "BEIDOU"; beidouCount++; break;
-                default:
-                    constellationName = "OTHER"; otherCount++; break;
+                    beidouCount++; if (used) beidouUsedInFix++; break;
+                case GnssStatus.CONSTELLATION_QZSS:
+                    qzssCount++; break;
+                case GnssStatus.CONSTELLATION_SBAS:
+                    sbasCount++; break;
             }
+
+            // Determine frequency band
+            String frequencyBand = determineFrequencyBand(constellationType, status, i, hasL5BandSupport);
 
             Map<String, Object> sat = new HashMap<>();
             sat.put("constellation", constellationName);
-            sat.put("svid", status.getSvid(i));
-            sat.put("cn0DbHz", status.getCn0DbHz(i));
-            sat.put("elevation", status.getElevationDegrees(i));
-            sat.put("azimuth", status.getAzimuthDegrees(i));
+            sat.put("countryFlag", countryFlag);
+            sat.put("svid", svid);
+            sat.put("cn0DbHz", cn0);
+            sat.put("elevation", elevation);
+            sat.put("azimuth", azimuth);
             sat.put("hasEphemeris", status.hasEphemerisData(i));
             sat.put("hasAlmanac", status.hasAlmanacData(i));
-            sat.put("usedInFix", status.usedInFix(i));
+            sat.put("usedInFix", used);
+            sat.put("frequencyBand", frequencyBand);
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 try {
@@ -888,39 +1229,69 @@ public class MainActivity extends FlutterActivity {
         constellations.put("GLONASS", glonassCount);
         constellations.put("GALILEO", galileoCount);
         constellations.put("BEIDOU", beidouCount);
-        constellations.put("OTHER", otherCount);
+        constellations.put("QZSS", qzssCount);
+        constellations.put("SBAS", sbasCount);
 
-        String primarySystem = "GPS";
-        if (irnssUsedInFix > 0) {
-            primarySystem = "NAVIC";
-        } else if (gpsCount > 0) {
-            primarySystem = "GPS";
-        } else if (glonassCount > 0) {
-            primarySystem = "GLONASS";
-        } else if (beidouCount > 0) {
-            primarySystem = "BEIDOU";
-        } else if (galileoCount > 0) {
-            primarySystem = "GALILEO";
-        }
+        // System statistics
+        systemStats.put("IRNSS", createSystemStat("IRNSS", "🇮🇳", irnssCount, irnssUsedInFix));
+        systemStats.put("GPS", createSystemStat("GPS", "🇺🇸", gpsCount, gpsUsedInFix));
+        systemStats.put("GLONASS", createSystemStat("GLONASS", "🇷🇺", glonassCount, glonassUsedInFix));
+        systemStats.put("GALILEO", createSystemStat("GALILEO", "🇪🇺", galileoCount, galileoUsedInFix));
+        systemStats.put("BEIDOU", createSystemStat("BEIDOU", "🇨🇳", beidouCount, beidouUsedInFix));
+
+        String primarySystem = determinePrimarySystem(irnssUsedInFix, gpsUsedInFix, glonassUsedInFix,
+                galileoUsedInFix, beidouUsedInFix);
 
         Map<String, Object> result = new HashMap<>();
-        result.put("type", "SATELLITE_UPDATE");
+        result.put("type", "ENHANCED_SATELLITE_UPDATE");
         result.put("timestamp", System.currentTimeMillis());
         result.put("totalSatellites", status.getSatelliteCount());
         result.put("constellations", constellations);
+        result.put("systemStats", systemStats);
         result.put("satellites", satellites);
         result.put("navicSatellites", navicSatellites);
         result.put("isNavicAvailable", (irnssCount > 0));
-        result.put("navicSatellites", irnssCount);
+        result.put("navicSatellitesCount", irnssCount);
         result.put("navicUsedInFix", irnssUsedInFix);
         result.put("primarySystem", primarySystem);
-        result.put("locationProvider", primarySystem);
+        result.put("hasL5Band", hasL5BandSupport);
+        result.put("locationProvider", primarySystem + (hasL5BandSupport ? "_L5" : ""));
 
-        Log.d("NavIC", "Satellite Update - Primary: " + primarySystem +
-                ", NavIC: " + irnssCount + "(" + irnssUsedInFix + " in fix), " +
-                "Total: " + status.getSatelliteCount());
+        Log.d("NavIC", String.format(
+                "Enhanced Update - Primary: %s, NavIC: %d(%d), GPS: %d(%d), Total: %d, L5: %s",
+                primarySystem, irnssCount, irnssUsedInFix, gpsCount, gpsUsedInFix,
+                status.getSatelliteCount(), hasL5BandSupport ? "Yes" : "No"
+        ));
 
         return result;
+    }
+
+    private Map<String, Object> createSystemStat(String name, String flag, int total, int used) {
+        Map<String, Object> stat = new HashMap<>();
+        stat.put("name", name);
+        stat.put("flag", flag);
+        stat.put("total", total);
+        stat.put("used", used);
+        stat.put("available", total - used);
+        return stat;
+    }
+
+    private String determinePrimarySystem(int irnssUsed, int gpsUsed, int glonassUsed,
+                                          int galileoUsed, int beidouUsed) {
+        if (irnssUsed >= 4) return "NAVIC";
+        if (gpsUsed >= 4) return "GPS";
+        if (glonassUsed >= 4) return "GLONASS";
+        if (galileoUsed >= 4) return "GALILEO";
+        if (beidouUsed >= 4) return "BEIDOU";
+
+        // Hybrid positioning
+        int totalUsed = irnssUsed + gpsUsed + glonassUsed + galileoUsed + beidouUsed;
+        if (totalUsed >= 4) {
+            if (irnssUsed > 0) return "NAVIC_HYBRID";
+            return "MULTI_GNSS";
+        }
+
+        return "INSUFFICIENT";
     }
 
     private void stopRealTimeDetection(MethodChannel.Result result) {
@@ -1089,6 +1460,32 @@ public class MainActivity extends FlutterActivity {
         return "UNKNOWN";
     }
 
+    private String getChipsetInfo() {
+        try {
+            Class<?> systemPropsClass = Class.forName("android.os.SystemProperties");
+            Method getMethod = systemPropsClass.getMethod("get", String.class, String.class);
+
+            String[] chipsetProps = {
+                    "ro.board.platform",
+                    "ro.hardware",
+                    "ro.mediatek.platform",
+                    "ro.chipset",
+                    "vendor.gnss.chipset"
+            };
+
+            for (String prop : chipsetProps) {
+                String value = (String) getMethod.invoke(null, prop, "");
+                if (!value.isEmpty()) {
+                    return value.toLowerCase();
+                }
+            }
+        } catch (Exception e) {
+            Log.d("NavIC", "Could not access chipset info");
+        }
+
+        return Build.HARDWARE.toLowerCase();
+    }
+
     private String getConstellationName(int constellationType) {
         switch (constellationType) {
             case GnssStatus.CONSTELLATION_IRNSS: return "IRNSS";
@@ -1113,56 +1510,109 @@ public class MainActivity extends FlutterActivity {
     }
 
     // Optimized satellite detection data classes
-    private static class NavicSatellite {
+    private static class EnhancedSatellite {
         int svid;
-        float lastCn0;
+        String systemName;
+        int constellation;
+        String countryFlag;
+        float cn0;
         boolean usedInFix;
-        long firstDetected;
-        long lastUpdated;
+        float elevation;
+        float azimuth;
+        boolean hasEphemeris;
+        boolean hasAlmanac;
+        String frequencyBand;
+        long detectionTime;
         int detectionCount;
 
-        NavicSatellite(int svid) {
+        EnhancedSatellite(int svid, String systemName, int constellation, String countryFlag,
+                          float cn0, boolean usedInFix, float elevation, float azimuth,
+                          boolean hasEphemeris, boolean hasAlmanac, String frequencyBand,
+                          long detectionTime) {
             this.svid = svid;
-            this.firstDetected = System.currentTimeMillis();
+            this.systemName = systemName;
+            this.constellation = constellation;
+            this.countryFlag = countryFlag;
+            this.cn0 = cn0;
+            this.usedInFix = usedInFix;
+            this.elevation = elevation;
+            this.azimuth = azimuth;
+            this.hasEphemeris = hasEphemeris;
+            this.hasAlmanac = hasAlmanac;
+            this.frequencyBand = frequencyBand;
+            this.detectionTime = detectionTime;
+            this.detectionCount = 1;
         }
 
-        void update(float cn0, boolean usedInFix, long timestamp) {
-            this.lastCn0 = cn0;
-            this.usedInFix = usedInFix;
-            this.lastUpdated = timestamp;
-            this.detectionCount++;
+        String getKey() {
+            return systemName + "_" + svid;
         }
+
+        Map<String, Object> toDetailedMap() {
+            Map<String, Object> map = new HashMap<>();
+            map.put("svid", svid);
+            map.put("system", systemName);
+            map.put("constellation", constellation);
+            map.put("countryFlag", countryFlag);
+            map.put("cn0DbHz", cn0);
+            map.put("usedInFix", usedInFix);
+            map.put("elevation", elevation);
+            map.put("azimuth", azimuth);
+            map.put("hasEphemeris", hasEphemeris);
+            map.put("hasAlmanac", hasAlmanac);
+            map.put("frequencyBand", frequencyBand);
+            map.put("detectionTime", detectionTime);
+            map.put("detectionCount", detectionCount);
+            map.put("signalStrength", getSignalStrengthLevel());
+            return map;
+        }
+
+        String getSignalStrengthLevel() {
+            if (cn0 >= 35) return "EXCELLENT";
+            if (cn0 >= 25) return "GOOD";
+            if (cn0 >= 18) return "FAIR";
+            return "WEAK";
+        }
+    }
+
+    private static class EnhancedSatelliteScanResult {
+        int navicCount;
+        int navicUsedInFix;
+        int totalSatellites;
+        float navicSignalStrength;
+        List<Map<String, Object>> navicDetails;
+        Map<Integer, EnhancedSatellite> allSatellites;
+        Map<String, List<EnhancedSatellite>> satellitesBySystem;
+
+        EnhancedSatelliteScanResult(int navicCount, int navicUsedInFix, int totalSatellites,
+                                    float navicSignalStrength, List<Map<String, Object>> navicDetails,
+                                    Map<Integer, EnhancedSatellite> allSatellites,
+                                    Map<String, List<EnhancedSatellite>> satellitesBySystem) {
+            this.navicCount = navicCount;
+            this.navicUsedInFix = navicUsedInFix;
+            this.totalSatellites = totalSatellites;
+            this.navicSignalStrength = navicSignalStrength;
+            this.navicDetails = navicDetails;
+            this.allSatellites = allSatellites;
+            this.satellitesBySystem = satellitesBySystem;
+        }
+    }
+
+    private static class L5BandResult {
+        boolean hasL5Support = false;
+        double confidence = 0.0;
+        List<String> detectionMethods = new ArrayList<>();
 
         Map<String, Object> toMap() {
             Map<String, Object> map = new HashMap<>();
-            map.put("svid", svid);
-            map.put("cn0DbHz", lastCn0);
-            map.put("usedInFix", usedInFix);
-            map.put("firstDetected", firstDetected);
-            map.put("lastUpdated", lastUpdated);
-            map.put("detectionCount", detectionCount);
+            map.put("hasL5Support", hasL5Support);
+            map.put("confidence", confidence);
+            map.put("detectionMethods", detectionMethods);
             return map;
         }
     }
 
-    private static class SatelliteScanResult {
-        int navicCount;
-        int usedInFix;
-        int totalSatellites;
-        double averageSignalStrength;
-        List<Map<String, Object>> satelliteDetails;
-
-        SatelliteScanResult(int navicCount, int usedInFix, int totalSatellites,
-                          double averageSignalStrength, List<Map<String, Object>> satelliteDetails) {
-            this.navicCount = navicCount;
-            this.usedInFix = usedInFix;
-            this.totalSatellites = totalSatellites;
-            this.averageSignalStrength = averageSignalStrength;
-            this.satelliteDetails = satelliteDetails;
-        }
-    }
-
-    // Data classes for detection results (unchanged)
+    // Data classes for detection results
     private static class HardwareDetectionResult {
         boolean isSupported;
         String detectionMethod;
@@ -1223,6 +1673,7 @@ public class MainActivity extends FlutterActivity {
     private interface EnhancedSatelliteDetectionCallback {
         void onResult(boolean navicDetected, int navicCount, int totalSatellites,
                       int usedInFixCount, double signalStrength,
-                      List<Map<String, Object>> satelliteDetails, long acquisitionTime);
+                      List<Map<String, Object>> satelliteDetails, long acquisitionTime,
+                      List<Map<String, Object>> allSatellites, boolean hasL5Band);
     }
 }
