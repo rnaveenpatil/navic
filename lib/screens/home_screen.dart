@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
-import 'package:url_launcher/url_launcher.dart';
-import 'package:navic/services/location_service.dart';
-import 'package:navic/screens/emergency.dart';
+import 'package:navic_ss/services/location_service.dart';
+import 'package:navic_ss/screens/emergency.dart';
+import 'package:geolocator/geolocator.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -80,7 +80,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _checkNavicHardwareSupport() async {
     try {
-      // Hardware support is checked during location service initialization
       // Get current hardware status from location service
       final serviceStats = _locationService.getServiceStats();
 
@@ -96,13 +95,12 @@ class _HomeScreenState extends State<HomeScreen> {
         _navicUsedInFix = serviceStats['navicUsedInFix'] as int? ?? 0;
         _positioningMethod = serviceStats['positioningMethod'] as String? ?? "GPS";
         _l5BandInfo = serviceStats['l5BandInfo'] as Map<String, dynamic>? ?? {};
-        _visibleSystems = serviceStats['visibleSystems'] as List<dynamic>? ?? [];
+        _visibleSystems = (serviceStats['visibleSystems'] as List<dynamic>?) ?? [];
+        _allSatellites = _locationService.allSatellites;
 
         _updateHardwareMessage();
+        _isHardwareChecked = true;
       });
-
-      // Get all satellites
-      await _updateSatelliteData();
 
     } catch (e) {
       _setHardwareErrorState();
@@ -111,12 +109,18 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _updateSatelliteData() async {
     try {
+      final serviceStats = _locationService.getServiceStats();
       final satellites = _locationService.allSatellites;
       final systems = _locationService.visibleSystems;
 
       setState(() {
         _allSatellites = satellites;
         _visibleSystems = systems;
+        _navicSatelliteCount = serviceStats['navicSatellites'] as int? ?? 0;
+        _totalSatelliteCount = serviceStats['totalSatellites'] as int? ?? 0;
+        _navicUsedInFix = serviceStats['navicUsedInFix'] as int? ?? 0;
+        _hasL5Band = serviceStats['hasL5Band'] as bool? ?? false;
+        _positioningMethod = serviceStats['positioningMethod'] as String? ?? "GPS";
       });
     } catch (e) {
       print("Error updating satellite data: $e");
@@ -175,11 +179,42 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<bool> _checkAndRequestPermission() async {
-    bool hasPermission = await _locationService.checkLocationPermission();
-    if (!hasPermission) {
-      hasPermission = await _locationService.requestLocationPermission();
+    try {
+      // Check if location services are enabled
+      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        print("⚠️ Location services disabled");
+        // Don't show dialog here, let the user enable it manually
+        return false;
+      }
+
+      // Check current permission
+      LocationPermission permission = await Geolocator.checkPermission();
+
+      if (permission == LocationPermission.deniedForever) {
+        print("❌ Permission denied forever");
+        // Don't show dialog here
+        return false;
+      }
+
+      if (permission == LocationPermission.denied) {
+        // Request permission
+        permission = await Geolocator.requestPermission();
+
+        if (permission == LocationPermission.denied ||
+            permission == LocationPermission.deniedForever) {
+          print("❌ Permission denied after request");
+          return false;
+        }
+      }
+
+      print("📍 Permission status: $permission");
+      return permission == LocationPermission.always ||
+          permission == LocationPermission.whileInUse;
+    } catch (e) {
+      print("Permission error: $e");
+      return false;
     }
-    return hasPermission;
   }
 
   Future<void> _acquireCurrentLocation() async {
@@ -232,6 +267,8 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _startRealTimeMonitoring() async {
     try {
       await _locationService.startRealTimeMonitoring();
+      // Update satellite data after starting monitoring
+      await _updateSatelliteData();
     } catch (e) {
       print("Real-time monitoring failed: $e");
     }
@@ -258,6 +295,13 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _refreshLocation() async {
+    // Check permission first
+    final hasPermission = await _checkAndRequestPermission();
+    if (!hasPermission) {
+      print("❌ No location permission for refresh");
+      return;
+    }
+
     setState(() => _isLoading = true);
     await Future.wait([
       _checkNavicHardwareSupport(),
@@ -328,7 +372,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 point: mapCenter,
                 width: 80,
                 height: 80,
-                child: _buildLocationMarker(),
+                builder: (ctx) => _buildLocationMarker(),
               ),
             ],
           ),
@@ -506,7 +550,15 @@ class _HomeScreenState extends State<HomeScreen> {
                 itemCount: _allSatellites.length,
                 itemBuilder: (context, index) {
                   final sat = _allSatellites[index];
-                  return _buildSatelliteListItem(sat);
+                  if (sat is Map<String, dynamic>) {
+                    return _buildSatelliteListItem(sat);
+                  } else {
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.all(12),
+                      child: const Text("Invalid satellite data"),
+                    );
+                  }
                 },
               ),
             ),
@@ -526,7 +578,30 @@ class _HomeScreenState extends State<HomeScreen> {
     final frequencyBand = satellite['frequencyBand'] ?? 'Unknown';
     final elevation = (satellite['elevation'] as num?)?.toDouble() ?? 0.0;
 
-    final (iconColor, statusText) = _getSatelliteStatusInfo(cn0, usedInFix);
+    // Get satellite status info
+    Color satColor;
+    String statusText;
+
+    if (usedInFix) {
+      if (cn0 >= 30) {
+        satColor = Colors.green;
+        statusText = 'Strong';
+      } else if (cn0 >= 20) {
+        satColor = Colors.blue;
+        statusText = 'Good';
+      } else {
+        satColor = Colors.orange;
+        statusText = 'Weak';
+      }
+    } else {
+      if (cn0 >= 20) {
+        satColor = Colors.blue;
+        statusText = 'Visible';
+      } else {
+        satColor = Colors.grey;
+        statusText = 'Poor';
+      }
+    }
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
@@ -574,7 +649,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     Text(
                       "${cn0.toStringAsFixed(1)} dB-Hz",
                       style: TextStyle(
-                        color: iconColor,
+                        color: satColor,
                         fontSize: 12,
                         fontWeight: FontWeight.w500,
                       ),
@@ -603,22 +678,22 @@ class _HomeScreenState extends State<HomeScreen> {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             decoration: BoxDecoration(
-              color: iconColor.withOpacity(0.1),
+              color: satColor.withOpacity(0.1),
               borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: iconColor.withOpacity(0.3)),
+              border: Border.all(color: satColor.withOpacity(0.3)),
             ),
             child: Row(
               children: [
                 Icon(
                   usedInFix ? Icons.check_circle : Icons.circle,
-                  color: iconColor,
+                  color: satColor,
                   size: 12,
                 ),
                 const SizedBox(width: 4),
                 Text(
                   statusText,
                   style: TextStyle(
-                    color: iconColor,
+                    color: satColor,
                     fontSize: 11,
                     fontWeight: FontWeight.w500,
                   ),
@@ -632,16 +707,8 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildSystemSummary() {
-    final systemCounts = <String, int>{};
-    for (final system in _visibleSystems) {
-      if (system is Map<String, dynamic>) {
-        final name = system['name'] ?? 'UNKNOWN';
-        final count = system['count'] ?? 0;
-        if (count > 0) {
-          systemCounts[name] = count;
-        }
-      }
-    }
+    final systemStats = _locationService.systemStats;
+    final systems = ['IRNSS', 'GPS', 'GLONASS', 'GALILEO', 'BEIDOU'];
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -658,8 +725,17 @@ class _HomeScreenState extends State<HomeScreen> {
         Wrap(
           spacing: 8,
           runSpacing: 8,
-          children: systemCounts.entries.map((entry) {
-            final (systemColor, flag) = _getSystemInfo(entry.key);
+          children: systems.map((system) {
+            final systemData = systemStats[system] as Map<String, dynamic>?;
+            if (systemData == null) return Container();
+
+            final total = systemData['total'] as int? ?? 0;
+            final used = systemData['used'] as int? ?? 0;
+            final flag = systemData['flag'] ?? '🌍';
+
+            if (total == 0) return Container();
+
+            final systemColor = _getSystemColor(system);
             return Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
               decoration: BoxDecoration(
@@ -673,7 +749,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   Text(flag, style: const TextStyle(fontSize: 16)),
                   const SizedBox(width: 4),
                   Text(
-                    entry.key,
+                    system,
                     style: TextStyle(
                       color: systemColor,
                       fontSize: 12,
@@ -682,7 +758,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   const SizedBox(width: 4),
                   Text(
-                    "(${entry.value})",
+                    "($used/$total)",
                     style: TextStyle(
                       color: Colors.grey.shade600,
                       fontSize: 12,
@@ -695,25 +771,6 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       ],
     );
-  }
-
-  (Color, String) _getSystemInfo(String system) {
-    switch (system.toUpperCase()) {
-      case 'IRNSS':
-        return (Colors.green, '🇮🇳');
-      case 'GPS':
-        return (Colors.blue, '🇺🇸');
-      case 'GLONASS':
-        return (Colors.red, '🇷🇺');
-      case 'GALILEO':
-        return (Colors.purple, '🇪🇺');
-      case 'BEIDOU':
-        return (Colors.orange, '🇨🇳');
-      case 'QZSS':
-        return (Colors.pink, '🇯🇵');
-      default:
-        return (Colors.grey, '🌍');
-    }
   }
 
   Color _getSystemColor(String system) {
@@ -735,22 +792,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  (Color, String) _getSatelliteStatusInfo(double cn0, bool usedInFix) {
-    if (usedInFix) {
-      if (cn0 >= 30) return (Colors.green, 'Strong');
-      if (cn0 >= 20) return (Colors.blue, 'Good');
-      return (Colors.orange, 'Weak');
-    } else {
-      if (cn0 >= 20) return (Colors.blue, 'Visible');
-      return (Colors.grey, 'Poor');
-    }
-  }
-
   Widget _buildEnhancedSatelliteInfoCard() {
-    if (_currentEnhancedPosition?.satelliteInfo == null) {
-      return Container();
-    }
-
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -855,10 +897,12 @@ class _HomeScreenState extends State<HomeScreen> {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
       children: systems.map((system) {
-        final flag = _getSystemInfo(system).$2;
-        final color = _getSystemColor(system);
-        final total = (systemStats[system] as Map<String, dynamic>?)?['total'] as int? ?? 0;
-        final used = (systemStats[system] as Map<String, dynamic>?)?['used'] as int? ?? 0;
+        final systemData = systemStats[system] as Map<String, dynamic>?;
+        if (systemData == null) return Container();
+
+        final total = systemData['total'] as int? ?? 0;
+        final used = systemData['used'] as int? ?? 0;
+        final flag = systemData['flag'] ?? '🌍';
 
         return Column(
           children: [
@@ -868,7 +912,7 @@ class _HomeScreenState extends State<HomeScreen> {
               system,
               style: TextStyle(
                 fontSize: 10,
-                color: color,
+                color: _getSystemColor(system),
                 fontWeight: FontWeight.w600,
               ),
             ),
@@ -1250,18 +1294,39 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildHardwareStatusCard() {
-    final (cardColor, iconColor, icon) = _getHardwareStatusColors();
+    // Get hardware status colors
+    Color cardColor;
+    Color statusColor;
+    IconData icon;
+
+    if (!_isNavicSupported && !_hasL5Band) {
+      cardColor = Colors.orange.shade50;
+      statusColor = Colors.orange;
+      icon = Icons.warning;
+    } else if (_isNavicSupported && !_hasL5Band) {
+      cardColor = Colors.amber.shade50;
+      statusColor = Colors.orange;
+      icon = Icons.info;
+    } else if (_isNavicSupported && _hasL5Band) {
+      cardColor = Colors.green.shade50;
+      statusColor = Colors.green;
+      icon = Icons.check_circle;
+    } else {
+      cardColor = Colors.blue.shade50;
+      statusColor = Colors.blue;
+      icon = Icons.gps_fixed;
+    }
 
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: cardColor,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: iconColor.withOpacity(0.3)),
+        border: Border.all(color: statusColor.withOpacity(0.3)),
       ),
       child: Row(
         children: [
-          Icon(icon, color: iconColor, size: 20),
+          Icon(icon, color: statusColor, size: 20),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
@@ -1272,7 +1337,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   style: TextStyle(
                     fontWeight: FontWeight.w600,
                     fontSize: 12,
-                    color: iconColor,
+                    color: statusColor,
                   ),
                 ),
                 const SizedBox(height: 4),
@@ -1312,14 +1377,45 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildEnhancedHardwareSupportBanner() {
-    final (bannerColor, iconColor, icon, status, subtitle) = _getHardwareBannerConfig();
+    // Get banner configuration
+    Color bannerColor;
+    Color bannerIconColor;
+    IconData bannerIcon;
+    String bannerStatus;
+    String bannerSubtitle;
+
+    if (_isNavicActive) {
+      bannerColor = Colors.green.shade50;
+      bannerIconColor = Colors.green;
+      bannerIcon = Icons.satellite_alt;
+      bannerStatus = "NavIC Active";
+      bannerSubtitle = "Using $_navicSatelliteCount satellites";
+    } else if (_isNavicSupported && _hasL5Band) {
+      bannerColor = Colors.blue.shade50;
+      bannerIconColor = Colors.blue;
+      bannerIcon = Icons.check_circle;
+      bannerStatus = "NavIC Ready";
+      bannerSubtitle = "L5 band available";
+    } else if (_isNavicSupported && !_hasL5Band) {
+      bannerColor = Colors.amber.shade50;
+      bannerIconColor = Colors.orange;
+      bannerIcon = Icons.info;
+      bannerStatus = "NavIC Limited";
+      bannerSubtitle = "No L5 band";
+    } else {
+      bannerColor = Colors.orange.shade50;
+      bannerIconColor = Colors.orange;
+      bannerIcon = Icons.warning;
+      bannerStatus = "GPS Only";
+      bannerSubtitle = "No NavIC hardware";
+    }
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
         color: bannerColor,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: iconColor.withOpacity(0.3)),
+        border: Border.all(color: bannerIconColor.withOpacity(0.3)),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withOpacity(0.1),
@@ -1330,15 +1426,15 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       child: Row(
         children: [
-          Icon(icon, color: iconColor, size: 20),
+          Icon(bannerIcon, color: bannerIconColor, size: 20),
           const SizedBox(width: 12),
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(status, style: TextStyle(color: iconColor, fontSize: 14, fontWeight: FontWeight.bold)),
+              Text(bannerStatus, style: TextStyle(color: bannerIconColor, fontSize: 14, fontWeight: FontWeight.bold)),
               Text(
-                subtitle,
-                style: TextStyle(color: iconColor, fontSize: 11),
+                bannerSubtitle,
+                style: TextStyle(color: bannerIconColor, fontSize: 11),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
@@ -1348,7 +1444,7 @@ class _HomeScreenState extends State<HomeScreen> {
           Expanded(
             child: Text(
               _hardwareMessage,
-              style: TextStyle(color: iconColor, fontSize: 11),
+              style: TextStyle(color: bannerIconColor, fontSize: 11),
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
             ),
@@ -1357,13 +1453,13 @@ class _HomeScreenState extends State<HomeScreen> {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
-                color: iconColor.withOpacity(0.2),
+                color: bannerIconColor.withOpacity(0.2),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Text(
                 "${(_confidenceLevel * 100).toStringAsFixed(0)}%",
                 style: TextStyle(
-                  color: iconColor,
+                  color: bannerIconColor,
                   fontSize: 10,
                   fontWeight: FontWeight.bold,
                 ),
@@ -1372,54 +1468,6 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       ),
     );
-  }
-
-  (Color, Color, IconData, String, String) _getHardwareBannerConfig() {
-    if (_isNavicActive) {
-      return (
-      Colors.green.shade50,
-      Colors.green,
-      Icons.satellite_alt,
-      "NavIC Active",
-      "Using $_navicSatelliteCount satellites"
-      );
-    } else if (_isNavicSupported && _hasL5Band) {
-      return (
-      Colors.blue.shade50,
-      Colors.blue,
-      Icons.check_circle,
-      "NavIC Ready",
-      "L5 band available"
-      );
-    } else if (_isNavicSupported && !_hasL5Band) {
-      return (
-      Colors.amber.shade50,
-      Colors.orange,
-      Icons.info,
-      "NavIC Limited",
-      "No L5 band"
-      );
-    } else {
-      return (
-      Colors.orange.shade50,
-      Colors.orange,
-      Icons.warning,
-      "GPS Only",
-      "No NavIC hardware"
-      );
-    }
-  }
-
-  (Color, Color, IconData) _getHardwareStatusColors() {
-    if (!_isNavicSupported && !_hasL5Band) {
-      return (Colors.orange.shade50, Colors.orange, Icons.warning);
-    } else if (_isNavicSupported && !_hasL5Band) {
-      return (Colors.amber.shade50, Colors.orange, Icons.info);
-    } else if (_isNavicSupported && _hasL5Band) {
-      return (Colors.green.shade50, Colors.green, Icons.check_circle);
-    } else {
-      return (Colors.blue.shade50, Colors.blue, Icons.gps_fixed);
-    }
   }
 
   @override

@@ -1,23 +1,24 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:navic_ss/screens/home_screen.dart';
+
+//import 'services/permission_service.dart';
 import 'screens/home_screen.dart';
 
 void main() {
-  runApp(const MyApp());
+  runApp(MyApp());
 }
 
 class MyApp extends StatelessWidget {
-  const MyApp({super.key});
-
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'NavIC Navigation',
+      title: 'NavIC Detector',
       theme: ThemeData(
-        primarySwatch: Colors.green,
-        useMaterial3: true,
+        primarySwatch: Colors.blue,
       ),
-      home: const HomeScreen(),
-      debugShowCheckedModeBanner: false,
+      home: HomeScreen(),
     );
   }
 }
+

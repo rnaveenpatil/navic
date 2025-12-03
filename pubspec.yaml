@@ -1,4 +1,4 @@
-name: navic
+name: navic_ss
 description: A NavIC Navigation App
 
 publish_to: 'none'
@@ -6,47 +6,33 @@ publish_to: 'none'
 version: 1.0.0+1
 
 environment:
-  sdk: '>=3.0.0 <4.0.0'
+  sdk: ">=2.19.0 <3.0.0"  # Older Dart SDK for V1 compatibility
+  flutter: ">=2.5.0 <4.0.0"
 
 dependencies:
   flutter:
     sdk: flutter
 
-  # Maps & Location - SIMPLE AND WORKING
-  flutter_map: ^6.1.1
-  latlong2: ^0.9.0
+  # =========== COMPATIBLE OLDER VERSIONS FOR V1 EMBEDDING ===========
+  # Maps integration - compatible versions
+  flutter_map: ^5.0.0  # This requires latlong2 ^0.9.0
+  latlong2: ^0.9.0     # Match flutter_map requirement
 
-  # Location Services
-  geolocator: ^11.0.1
+  # Geolocation - older compatible version
+  geolocator: ^9.0.2   # Compatible with V1 embedding
 
-  # URL & Sharing
-  url_launcher: ^6.2.0
+  # URL launching and sharing
+  url_launcher: ^6.1.0
   share_plus: ^7.0.1
 
-  # Essential UI enhancements
-  flutter_svg: ^2.0.9
-  shimmer: ^2.0.0
-  animations: ^2.0.7
-
-  # Permission handling - LATEST STABLE
-  permission_handler: ^11.1.0
-
-  # Connectivity checking
-  connectivity_plus: ^5.0.0
-
-  # File system access (for logs, storage, etc.)
-  path_provider: ^2.0.15
-
-  # State management
-  provider: ^6.1.0
-
-  # HTTP client for API calls
-  http: ^1.1.0
+  # UI
+  cupertino_icons: ^1.0.5
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^3.0.0
 
 flutter:
   uses-material-design: true
+  assets:
+   # - assets/

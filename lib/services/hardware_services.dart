@@ -5,6 +5,7 @@ class NavicHardwareService {
   static const MethodChannel _channel = MethodChannel('navic_support');
   static Function(Map<String, dynamic>)? _onSatelliteUpdate;
   static Function(Map<String, dynamic>)? _onLocationUpdate;
+  static Function(Map<String, dynamic>)? _onPermissionResult;
 
   // Detection state tracking
   static bool _isRealTimeActive = false;
@@ -14,6 +15,12 @@ class NavicHardwareService {
   static NavicDetectionResult? _cachedResult;
   static DateTime? _lastDetectionTime;
   static const Duration _cacheValidity = Duration(minutes: 5);
+
+  /// Initialize method call handler
+  static void initialize() {
+    _channel.setMethodCallHandler(_handleMethodCall);
+    print("📱 Method channel handler initialized");
+  }
 
   /// Checks if the device hardware supports NavIC with enhanced satellite detection
   static Future<NavicDetectionResult> checkNavicHardware() async {
@@ -29,7 +36,7 @@ class NavicHardwareService {
       print("🚀 Starting enhanced NavIC hardware detection...");
       final Map<dynamic, dynamic> result = await _channel.invokeMethod('checkNavicHardware');
       final converted = _convertResult(result);
-      
+
       final detectionResult = NavicDetectionResult.fromMap(converted);
       _cachedResult = detectionResult;
       _lastDetectionTime = DateTime.now();
@@ -55,7 +62,7 @@ class NavicHardwareService {
       print("🛰️ Getting all visible satellites...");
       final Map<dynamic, dynamic> result = await _channel.invokeMethod('getAllSatellites');
       final converted = _convertResult(result);
-      
+
       return AllSatellitesResult.fromMap(converted);
     } on PlatformException catch (e) {
       print("❌ Platform error getting all satellites: ${e.message}");
@@ -89,12 +96,10 @@ class NavicHardwareService {
       if (_isRealTimeActive) {
         print("ℹ️ Real-time detection already active");
         return DetectionResponse(
-          success: false,
-          message: 'Real-time detection already active'
+            success: false,
+            message: 'Real-time detection already active'
         );
       }
-
-      _channel.setMethodCallHandler(_handleMethodCall);
 
       final Map<dynamic, dynamic> result = await _channel.invokeMethod('startRealTimeDetection');
       final converted = _convertResult(result);
@@ -124,15 +129,14 @@ class NavicHardwareService {
       if (!_isRealTimeActive) {
         print("ℹ️ Real-time detection not active");
         return DetectionResponse(
-          success: true,
-          message: 'Real-time detection not active'
+            success: true,
+            message: 'Real-time detection not active'
         );
       }
 
       final Map<dynamic, dynamic> result = await _channel.invokeMethod('stopRealTimeDetection');
       final converted = _convertResult(result);
 
-      _channel.setMethodCallHandler(null);
       _isRealTimeActive = false;
 
       print("🛰️ Real-time NavIC detection stopped");
@@ -153,8 +157,8 @@ class NavicHardwareService {
       if (_isLocationTracking) {
         print("ℹ️ Location updates already active");
         return DetectionResponse(
-          success: false,
-          message: 'Location updates already active'
+            success: false,
+            message: 'Location updates already active'
         );
       }
 
@@ -186,8 +190,8 @@ class NavicHardwareService {
       if (!_isLocationTracking) {
         print("ℹ️ Location updates not active");
         return DetectionResponse(
-          success: true,
-          message: 'Location updates not active'
+            success: true,
+            message: 'Location updates not active'
         );
       }
 
@@ -224,12 +228,79 @@ class NavicHardwareService {
     }
   }
 
+  /// Request location permissions
+  static Future<bool> requestLocationPermissions() async {
+    try {
+      final Map<dynamic, dynamic> result = await _channel.invokeMethod('requestLocationPermissions');
+      final converted = _convertResult(result);
+      return converted['success'] == true;
+    } on PlatformException catch (e) {
+      print("❌ Platform error requesting permissions: ${e.message}");
+      return false;
+    } catch (e, stackTrace) {
+      print("❌ Unexpected error requesting permissions: $e");
+      print("📋 Stack trace: $stackTrace");
+      return false;
+    }
+  }
+
+  /// Open location settings
+  static Future<bool> openLocationSettings() async {
+    try {
+      final Map<dynamic, dynamic> result = await _channel.invokeMethod('openLocationSettings');
+      final converted = _convertResult(result);
+      return converted['success'] == true;
+    } on PlatformException catch (e) {
+      print("❌ Platform error opening settings: ${e.message}");
+      return false;
+    } catch (e, stackTrace) {
+      print("❌ Unexpected error opening settings: $e");
+      print("📋 Stack trace: $stackTrace");
+      return false;
+    }
+  }
+
+  /// Check if location is enabled
+  static Future<LocationStatus> isLocationEnabled() async {
+    try {
+      final Map<dynamic, dynamic> result = await _channel.invokeMethod('isLocationEnabled');
+      final converted = _convertResult(result);
+      return LocationStatus.fromMap(converted);
+    } on PlatformException catch (e) {
+      print("❌ Platform error checking location status: ${e.message}");
+      return LocationStatus.error();
+    } catch (e, stackTrace) {
+      print("❌ Unexpected error checking location status: $e");
+      print("📋 Stack trace: $stackTrace");
+      return LocationStatus.error();
+    }
+  }
+
+  /// Get device info
+  static Future<DeviceInfo> getDeviceInfo() async {
+    try {
+      final Map<dynamic, dynamic> result = await _channel.invokeMethod('getDeviceInfo');
+      final converted = _convertResult(result);
+      return DeviceInfo.fromMap(converted);
+    } on PlatformException catch (e) {
+      print("❌ Platform error getting device info: ${e.message}");
+      return DeviceInfo.error();
+    } catch (e, stackTrace) {
+      print("❌ Unexpected error getting device info: $e");
+      print("📋 Stack trace: $stackTrace");
+      return DeviceInfo.error();
+    }
+  }
+
   /// Handle method calls from native side
   static Future<dynamic> _handleMethodCall(MethodCall call) async {
     try {
-      print("📱 Method call received: ${call.method}");
-      
+      print("📱 Method call received from native: ${call.method}");
+
       switch (call.method) {
+        case "onPermissionResult":
+          await _handlePermissionResult(call);
+          break;
         case "onSatelliteUpdate":
           await _handleSatelliteUpdate(call);
           break;
@@ -248,23 +319,44 @@ class NavicHardwareService {
     return null;
   }
 
+  /// Handle permission result callback
+  static Future<void> _handlePermissionResult(MethodCall call) async {
+    if (_onPermissionResult == null) {
+      print("⚠️ No permission result callback registered");
+      return;
+    }
+
+    try {
+      final Map<dynamic, dynamic> data = call.arguments as Map<dynamic, dynamic>;
+      final convertedData = _convertResult(data);
+
+      // Call the registered callback
+      _onPermissionResult!(convertedData);
+
+      print("🔐 Permission result received: ${convertedData['granted']}");
+    } catch (e, stackTrace) {
+      print("❌ Error processing permission result: $e");
+      print("📋 Stack trace: $stackTrace");
+    }
+  }
+
   /// Handle satellite update callback with enhanced information
   static Future<void> _handleSatelliteUpdate(MethodCall call) async {
     if (_onSatelliteUpdate == null) {
       print("⚠️ No satellite update callback registered");
       return;
     }
-    
+
     try {
       final Map<dynamic, dynamic> data = call.arguments as Map<dynamic, dynamic>;
       final convertedData = _convertResult(data);
-      
+
       // Call the registered callback
       _onSatelliteUpdate!(convertedData);
 
       // Log enhanced satellite update summary
       _logSatelliteUpdate(convertedData);
-      
+
     } catch (e, stackTrace) {
       print("❌ Error processing satellite update: $e");
       print("📋 Stack trace: $stackTrace");
@@ -277,17 +369,17 @@ class NavicHardwareService {
       print("⚠️ No location update callback registered");
       return;
     }
-    
+
     try {
       final Map<dynamic, dynamic> data = call.arguments as Map<dynamic, dynamic>;
       final locationData = _convertResult(data);
-      
+
       // Call the registered callback
       _onLocationUpdate!(locationData);
 
       // Log location update
       _logLocationUpdate(locationData);
-      
+
     } catch (e, stackTrace) {
       print("❌ Error processing location update: $e");
       print("📋 Stack trace: $stackTrace");
@@ -309,13 +401,13 @@ class NavicHardwareService {
     print("  💾 Chipset: ${data['chipsetType']}");
     print("  📡 Positioning Method: ${data['positioningMethod'] ?? 'UNKNOWN'}");
     print("  📶 L5 Band: ${data['hasL5Band'] == true ? '✅ Supported' : '❌ Not Supported'}");
-    
+
     if (data['l5BandInfo'] is Map) {
       final l5Info = data['l5BandInfo'] as Map<String, dynamic>;
       final confidence = (l5Info['confidence'] as num?)?.toDouble() ?? 0.0;
       print("  🔍 L5 Confidence: ${(confidence * 100).toStringAsFixed(1)}%");
     }
-    
+
     // Log verification methods
     if (data['verificationMethods'] is List) {
       final methods = data['verificationMethods'] as List<dynamic>;
@@ -332,7 +424,7 @@ class NavicHardwareService {
     final navicUsed = satelliteData['navicUsedInFix'] ?? 0;
     final primary = satelliteData['primarySystem'] ?? 'GPS';
     final hasL5 = satelliteData['hasL5Band'] ?? false;
-    
+
     print("\n📡 Enhanced Satellite Update:");
     print("  📡 Total Satellites: $total");
     if (navicCount > 0) {
@@ -340,7 +432,7 @@ class NavicHardwareService {
     }
     print("  🎯 Primary System: $primary");
     print("  📶 L5 Band: ${hasL5 ? '✅ Enabled' : '❌ Not Available'}");
-    
+
     // Log system statistics if available
     if (satelliteData['systemStats'] is Map) {
       final systemStats = satelliteData['systemStats'] as Map<String, dynamic>;
@@ -368,7 +460,7 @@ class NavicHardwareService {
     final speed = (locationData['speed'] as num?)?.toStringAsFixed(1) ?? '0.0';
     final bearing = (locationData['bearing'] as num?)?.toStringAsFixed(0) ?? '0';
     final altitude = (locationData['altitude'] as num?)?.toStringAsFixed(1) ?? 'N/A';
-    
+
     print("\n📍 Location Update:");
     print("  🌍 Coordinates: $lat, $lng");
     print("  ⛰️ Altitude: ${altitude}m");
@@ -376,6 +468,12 @@ class NavicHardwareService {
     print("  🚀 Speed: ${speed}m/s");
     print("  🧭 Bearing: ${bearing}°");
     print("  🔧 Provider: $provider");
+  }
+
+  /// Set callback for permission results
+  static void setPermissionResultCallback(Function(Map<String, dynamic>) callback) {
+    _onPermissionResult = callback;
+    print("🔐 Permission result callback registered");
   }
 
   /// Set callback for satellite updates
@@ -388,6 +486,12 @@ class NavicHardwareService {
   static void setLocationUpdateCallback(Function(Map<String, dynamic>) callback) {
     _onLocationUpdate = callback;
     print("📍 Location update callback registered");
+  }
+
+  /// Remove permission result callback
+  static void removePermissionResultCallback() {
+    _onPermissionResult = null;
+    print("🔐 Permission result callback removed");
   }
 
   /// Remove satellite update callback
@@ -616,26 +720,34 @@ class DetectionResponse {
 class LocationPermissions {
   final bool hasFineLocation;
   final bool hasCoarseLocation;
+  final bool hasBackgroundLocation;
   final bool allPermissionsGranted;
+  final bool shouldShowRationale;
 
   const LocationPermissions({
     required this.hasFineLocation,
     required this.hasCoarseLocation,
+    required this.hasBackgroundLocation,
     required this.allPermissionsGranted,
+    required this.shouldShowRationale,
   });
 
   factory LocationPermissions.fromMap(Map<String, dynamic> map) {
     return LocationPermissions(
       hasFineLocation: map['hasFineLocation'] as bool? ?? false,
       hasCoarseLocation: map['hasCoarseLocation'] as bool? ?? false,
+      hasBackgroundLocation: map['hasBackgroundLocation'] as bool? ?? true,
       allPermissionsGranted: map['allPermissionsGranted'] as bool? ?? false,
+      shouldShowRationale: map['shouldShowRationale'] as bool? ?? false,
     );
   }
 
   factory LocationPermissions.error() => const LocationPermissions(
     hasFineLocation: false,
     hasCoarseLocation: false,
+    hasBackgroundLocation: false,
     allPermissionsGranted: false,
+    shouldShowRationale: false,
   );
 }
 
@@ -673,5 +785,77 @@ class AllSatellitesResult {
     hasL5Band: false,
     timestamp: 0,
     hasError: true,
+  );
+}
+
+class LocationStatus {
+  final bool gpsEnabled;
+  final bool networkEnabled;
+  final bool anyEnabled;
+
+  const LocationStatus({
+    required this.gpsEnabled,
+    required this.networkEnabled,
+    required this.anyEnabled,
+  });
+
+  factory LocationStatus.fromMap(Map<String, dynamic> map) {
+    return LocationStatus(
+      gpsEnabled: map['gpsEnabled'] as bool? ?? false,
+      networkEnabled: map['networkEnabled'] as bool? ?? false,
+      anyEnabled: map['anyEnabled'] as bool? ?? false,
+    );
+  }
+
+  factory LocationStatus.error() => const LocationStatus(
+    gpsEnabled: false,
+    networkEnabled: false,
+    anyEnabled: false,
+  );
+}
+
+class DeviceInfo {
+  final String manufacturer;
+  final String model;
+  final String device;
+  final String hardware;
+  final String board;
+  final int androidVersion;
+  final String androidRelease;
+  final Map<String, dynamic> gnssCapabilities;
+
+  const DeviceInfo({
+    required this.manufacturer,
+    required this.model,
+    required this.device,
+    required this.hardware,
+    required this.board,
+    required this.androidVersion,
+    required this.androidRelease,
+    required this.gnssCapabilities,
+  });
+
+  factory DeviceInfo.fromMap(Map<String, dynamic> map) {
+    return DeviceInfo(
+      manufacturer: map['manufacturer'] as String? ?? 'Unknown',
+      model: map['model'] as String? ?? 'Unknown',
+      device: map['device'] as String? ?? 'Unknown',
+      hardware: map['hardware'] as String? ?? 'Unknown',
+      board: map['board'] as String? ?? 'Unknown',
+      androidVersion: map['androidVersion'] as int? ?? 0,
+      androidRelease: map['androidRelease'] as String? ?? 'Unknown',
+      gnssCapabilities: Map<String, dynamic>.from(map['gnssCapabilities'] as Map? ?? {}),
+    );
+  }
+
+  factory DeviceInfo.error() => const DeviceInfo(
+    manufacturer: 'Unknown',
+    model: 'Unknown',
+    device: 'Unknown',
+    hardware: 'Unknown',
+    board: 'Unknown',
+    androidVersion: 0,
+    androidRelease: 'Unknown',
+    gnssCapabilities: {},
   );
 }

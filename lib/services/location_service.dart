@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'package:geolocator/geolocator.dart';
-import 'package:navic/services/hardware_services.dart';
+import 'package:navic_ss/services/hardware_services.dart';
 
 class EnhancedPosition {
   final double latitude;
@@ -153,7 +153,23 @@ class LocationService {
   /// Initialize service with enhanced hardware detection
   Future<void> _initializeService() async {
     print("🚀 Initializing Enhanced Location Service with NavIC + L5 support...");
-    await _performHardwareDetection();
+
+    // Initialize the method channel handler
+    NavicHardwareService.initialize();
+
+    // Set up permission callback
+    NavicHardwareService.setPermissionResultCallback(_onPermissionResult);
+  }
+
+  /// Handle permission results
+  void _onPermissionResult(Map<String, dynamic> result) {
+    final granted = result['granted'] as bool? ?? false;
+    print("🔐 Permission result received: ${granted ? 'GRANTED' : 'DENIED'}");
+
+    if (granted) {
+      // Start hardware detection when permissions are granted
+      _performHardwareDetection();
+    }
   }
 
   /// Perform enhanced hardware detection
@@ -179,10 +195,11 @@ class LocationService {
       _hasL5Band = hardwareResult.hasL5Band;
       _positioningMethod = hardwareResult.positioningMethod;
       _l5BandInfo = hardwareResult.l5BandInfo;
+      _allSatellites = hardwareResult.allSatellites;
       _lastHardwareCheck = DateTime.now();
 
-      // Get all visible satellites
-      await _updateSatelliteData();
+      // Update system stats from satellite data
+      _updateSystemStats();
 
       // Log enhanced detection results
       _logHardwareDetectionResult();
@@ -193,16 +210,51 @@ class LocationService {
     }
   }
 
-  /// Update satellite data
-  Future<void> _updateSatelliteData() async {
-    try {
-      final satellitesResult = await NavicHardwareService.getAllSatellites();
-      if (!satellitesResult.hasError) {
-        _allSatellites = satellitesResult.satellites;
-        _visibleSystems = satellitesResult.systems;
+  /// Update system statistics from satellite data
+  void _updateSystemStats() {
+    final systemCounts = <String, int>{};
+    final systemUsed = <String, int>{};
+
+    for (final sat in _allSatellites) {
+      if (sat is Map<String, dynamic>) {
+        final system = sat['system'] ?? 'UNKNOWN';
+        final used = sat['usedInFix'] as bool? ?? false;
+
+        systemCounts[system] = (systemCounts[system] ?? 0) + 1;
+        if (used) {
+          systemUsed[system] = (systemUsed[system] ?? 0) + 1;
+        }
       }
-    } catch (e) {
-      print("⚠️ Failed to get satellite data: $e");
+    }
+
+    // Build system stats map
+    _systemStats.clear();
+    for (final entry in systemCounts.entries) {
+      final system = entry.key;
+      final total = entry.value;
+      final used = systemUsed[system] ?? 0;
+
+      _systemStats[system] = {
+        'name': system,
+        'total': total,
+        'used': used,
+        'flag': _getSystemFlag(system),
+      };
+    }
+
+    // Update visible systems
+    _visibleSystems = _systemStats.values.toList();
+  }
+
+  String _getSystemFlag(String system) {
+    switch (system) {
+      case 'IRNSS': return '🇮🇳';
+      case 'GPS': return '🇺🇸';
+      case 'GLONASS': return '🇷🇺';
+      case 'GALILEO': return '🇪🇺';
+      case 'BEIDOU': return '🇨🇳';
+      case 'QZSS': return '🇯🇵';
+      default: return '🌍';
     }
   }
 
@@ -245,9 +297,67 @@ class LocationService {
     _visibleSystems = [];
   }
 
+  /// Check location permission
+  Future<bool> checkLocationPermission() async {
+    try {
+      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        print("⚠️ Location services disabled");
+        return false;
+      }
+
+      LocationPermission permission = await Geolocator.checkPermission();
+
+      if (permission == LocationPermission.deniedForever) {
+        print("❌ Permission denied forever");
+        return false;
+      }
+
+      if (permission == LocationPermission.denied) {
+        print("📍 Permission denied, needs to request");
+        return false;
+      }
+
+      print("📍 Permission status: $permission");
+      return permission == LocationPermission.always ||
+          permission == LocationPermission.whileInUse;
+    } catch (e) {
+      print("❌ Permission check failed: $e");
+      return false;
+    }
+  }
+
+  /// Request location permission
+  Future<bool> requestLocationPermission() async {
+    try {
+      LocationPermission permission = await Geolocator.requestPermission();
+
+      print("📍 Permission requested: $permission");
+
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        print("❌ Permission request denied");
+        return false;
+      }
+
+      return permission == LocationPermission.always ||
+          permission == LocationPermission.whileInUse;
+    } catch (e) {
+      print("❌ Permission request failed: $e");
+      return false;
+    }
+  }
+
   /// Get current location with enhanced accuracy optimization
   Future<EnhancedPosition?> getCurrentLocation() async {
     try {
+      // Ensure we have location permission
+      final hasPermission = await checkLocationPermission();
+      if (!hasPermission) {
+        print("❌ Location permission not granted");
+        return null;
+      }
+
       _totalReadings++;
 
       // Ensure hardware state is current
@@ -258,9 +368,10 @@ class LocationService {
         await startRealTimeMonitoring();
       }
 
+      // Get position using Geolocator
       final position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.bestForNavigation,
-        timeLimit: const Duration(seconds: 30),
+        desiredAccuracy: LocationAccuracy.best,
+        timeLimit: const Duration(seconds: 15),
       );
 
       _updatePerformanceTracking(position.accuracy, position);
@@ -430,7 +541,7 @@ class LocationService {
   Stream<EnhancedPosition> getLocationStream() {
     return Geolocator.getPositionStream(
       locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.bestForNavigation,
+        accuracy: LocationAccuracy.best,
         distanceFilter: 0,
         timeLimit: Duration(seconds: 30),
       ),
@@ -440,7 +551,7 @@ class LocationService {
 
       // Update satellite data periodically
       if (_totalReadings % 5 == 0) {
-        await _updateSatelliteData();
+        await _performHardwareDetection();
       }
 
       return _createEnhancedPosition(position);
@@ -450,17 +561,27 @@ class LocationService {
   /// Enhanced real-time satellite update handler
   void _onSatelliteUpdate(Map<String, dynamic> data) {
     try {
-      // Update system stats
-      if (data['systemStats'] is Map) {
-        _systemStats = (data['systemStats'] as Map).cast<String, dynamic>();
-      }
-
-      _isNavicActive = data['isNavicAvailable'] as bool? ?? false;
+      // Update satellite counts
       _navicSatelliteCount = data['navicSatellitesCount'] as int? ?? 0;
       _totalSatelliteCount = data['totalSatellites'] as int? ?? 0;
       _navicUsedInFix = data['navicUsedInFix'] as int? ?? 0;
-      _primarySystem = data['primarySystem'] as String? ?? 'GPS';
+      _isNavicActive = _navicSatelliteCount > 0;
       _hasL5Band = data['hasL5Band'] as bool? ?? false;
+
+      // Update all satellites list
+      if (data['allSatellites'] is List) {
+        _allSatellites = data['allSatellites'] as List<dynamic>;
+        _updateSystemStats();
+      }
+
+      // Update system stats
+      if (data['systemStats'] is Map) {
+        _systemStats = (data['systemStats'] as Map).cast<String, dynamic>();
+        _visibleSystems = _systemStats.values.toList();
+      }
+
+      // Update primary system
+      _primarySystem = data['primarySystem'] as String? ?? 'GPS';
 
       // Update positioning method based on current state
       _updatePositioningMethod();
@@ -543,7 +664,9 @@ class LocationService {
     }
 
     try {
+      // Set up satellite update callback
       NavicHardwareService.setSatelliteUpdateCallback(_onSatelliteUpdate);
+
       final result = await NavicHardwareService.startRealTimeDetection();
 
       if (result.success) {
@@ -576,37 +699,22 @@ class LocationService {
     }
   }
 
-  /// Permission management
-  Future<bool> checkLocationPermission() async {
+  /// Open location settings
+  Future<bool> openLocationSettings() async {
     try {
-      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) {
-        print("⚠️ Location services disabled");
-        return false;
-      }
-
-      final permission = await Geolocator.checkPermission();
-      final hasPermission = permission == LocationPermission.always ||
-          permission == LocationPermission.whileInUse;
-
-      print("📍 Permission status: $permission");
-      return hasPermission;
+      return await Geolocator.openLocationSettings();
     } catch (e) {
-      print("❌ Permission check failed: $e");
+      print("❌ Error opening location settings: $e");
       return false;
     }
   }
 
-  Future<bool> requestLocationPermission() async {
+  /// Check if location is enabled
+  Future<bool> isLocationEnabled() async {
     try {
-      final permission = await Geolocator.requestPermission();
-      final granted = permission == LocationPermission.always ||
-          permission == LocationPermission.whileInUse;
-
-      print("📍 Permission requested: $permission, Granted: $granted");
-      return granted;
+      return await Geolocator.isLocationServiceEnabled();
     } catch (e) {
-      print("❌ Permission request failed: $e");
+      print("❌ Error checking location status: $e");
       return false;
     }
   }
@@ -721,6 +829,7 @@ class LocationService {
 
   void dispose() {
     stopRealTimeMonitoring();
+    NavicHardwareService.removePermissionResultCallback();
     _locationHistory.clear();
     _recentAccuracies.clear();
     _rawPositions.clear();

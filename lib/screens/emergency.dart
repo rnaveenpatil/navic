@@ -3,6 +3,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:share_plus/share_plus.dart';
 import 'dart:async';
 import '../services/location_service.dart';
+import 'package:geolocator/geolocator.dart';
 
 class EmergencyPage extends StatefulWidget {
   const EmergencyPage({super.key});
@@ -33,11 +34,60 @@ class _EmergencyPageState extends State<EmergencyPage> {
   void _initializeLocationService() async {
     // Initialize location service which includes hardware detection
     await _locationService.startRealTimeMonitoring();
-    // Hardware support is checked during real-time monitoring
+
+    // Get initial hardware status
+    final serviceStats = _locationService.getServiceStats();
+    setState(() {
+      _isNavicHardwareSupported = serviceStats['navicSupported'] as bool? ?? false;
+      _isNavicActive = serviceStats['navicActive'] as bool? ?? false;
+    });
+  }
+
+  // ---------------- Permission Helper ----------------
+  Future<bool> _checkAndRequestLocationPermission() async {
+    try {
+      // Check location services
+      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        _showError("Location services are disabled. Please enable location services.");
+        return false;
+      }
+
+      // Check current permission
+      LocationPermission permission = await Geolocator.checkPermission();
+
+      if (permission == LocationPermission.deniedForever) {
+        _showError("Location permission denied forever. Please enable in app settings.");
+        return false;
+      }
+
+      if (permission == LocationPermission.denied) {
+        // Request permission
+        permission = await Geolocator.requestPermission();
+
+        if (permission == LocationPermission.denied ||
+            permission == LocationPermission.deniedForever) {
+          _showError("Location permission denied. Emergency features require location access.");
+          return false;
+        }
+      }
+
+      return permission == LocationPermission.always ||
+          permission == LocationPermission.whileInUse;
+    } catch (e) {
+      _showError("Permission error: $e");
+      return false;
+    }
   }
 
   // ---------------- Helper: Get location safely ----------------
   Future<EnhancedPosition?> _getEnhancedLocation() async {
+    // Check permissions first
+    final hasPermission = await _checkAndRequestLocationPermission();
+    if (!hasPermission) {
+      return null;
+    }
+
     setState(() {
       _isLoading = true;
       _currentStatus = "Acquiring Location...";
@@ -51,6 +101,9 @@ class _EmergencyPageState extends State<EmergencyPage> {
         return null;
       }
 
+      // Update hardware status from new position
+      final serviceStats = _locationService.getServiceStats();
+
       setState(() {
         _currentStatus = "Location Acquired";
         _lastPosition = enhancedPos;
@@ -58,6 +111,7 @@ class _EmergencyPageState extends State<EmergencyPage> {
         _navicSatelliteCount = enhancedPos.navicSatellites ?? 0;
         _satelliteInfo = enhancedPos.satelliteInfo;
         _isNavicActive = enhancedPos.isNavicEnhanced;
+        _isNavicHardwareSupported = serviceStats['navicSupported'] as bool? ?? false;
       });
 
       return enhancedPos;
@@ -76,6 +130,7 @@ class _EmergencyPageState extends State<EmergencyPage> {
       SnackBar(
         content: Text(message),
         backgroundColor: Colors.red,
+        duration: const Duration(seconds: 3),
       ),
     );
     setState(() {
@@ -88,6 +143,7 @@ class _EmergencyPageState extends State<EmergencyPage> {
       SnackBar(
         content: Text(message),
         backgroundColor: Colors.green,
+        duration: const Duration(seconds: 2),
       ),
     );
   }
@@ -127,6 +183,10 @@ class _EmergencyPageState extends State<EmergencyPage> {
       return;
     }
 
+    // Check permissions first
+    final hasPermission = await _checkAndRequestLocationPermission();
+    if (!hasPermission) return;
+
     setState(() {
       _isLoading = true;
       _currentStatus = "Starting Live Location Sharing...";
@@ -145,6 +205,9 @@ class _EmergencyPageState extends State<EmergencyPage> {
       // Start periodic location updates
       _startPeriodicLocationUpdates();
 
+      // Update hardware status
+      final serviceStats = _locationService.getServiceStats();
+
       setState(() {
         _isLiveTracking = true;
         _isLoading = false;
@@ -152,6 +215,7 @@ class _EmergencyPageState extends State<EmergencyPage> {
         _locationSource = initialPos.locationSource;
         _navicSatelliteCount = initialPos.navicSatellites ?? 0;
         _isNavicActive = initialPos.isNavicEnhanced;
+        _isNavicHardwareSupported = serviceStats['navicSupported'] as bool? ?? false;
       });
 
       // Create and share the live tracking message
@@ -180,12 +244,16 @@ class _EmergencyPageState extends State<EmergencyPage> {
       try {
         EnhancedPosition? newPos = await _locationService.getCurrentLocation();
         if (newPos != null) {
+          // Update hardware status
+          final serviceStats = _locationService.getServiceStats();
+
           setState(() {
             _lastPosition = newPos;
             _locationSource = newPos.locationSource;
             _navicSatelliteCount = newPos.navicSatellites ?? 0;
             _satelliteInfo = newPos.satelliteInfo;
             _isNavicActive = newPos.isNavicEnhanced;
+            _isNavicHardwareSupported = serviceStats['navicSupported'] as bool? ?? false;
             _currentStatus = "Live Tracking - ${DateTime.now().toString().split('.').first}";
           });
         }
@@ -518,7 +586,20 @@ This is an automated emergency message.""";
   }
 
   Widget _buildSatelliteInfoCard() {
-    final constellations = _satelliteInfo['constellations'] as Map<String, dynamic>? ?? {};
+    // Extract constellations from satellite info
+    final systemStats = _satelliteInfo['systemStats'] as Map<String, dynamic>? ?? {};
+    final constellations = <String, int>{};
+
+    for (final entry in systemStats.entries) {
+      if (entry.value is Map<String, dynamic>) {
+        final systemData = entry.value as Map<String, dynamic>;
+        final used = systemData['used'] as int? ?? 0;
+        final total = systemData['total'] as int? ?? 0;
+        if (total > 0) {
+          constellations[entry.key] = used;
+        }
+      }
+    }
 
     return Container(
       width: double.infinity,

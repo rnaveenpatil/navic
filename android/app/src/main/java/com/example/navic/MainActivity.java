@@ -1,6 +1,7 @@
 package com.example.navic;
 
 import android.content.Context;
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.location.GnssStatus;
 import android.location.Location;
@@ -10,9 +11,11 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.provider.Settings;
 import android.util.Log;
 
 import androidx.annotation.NonNull;
+import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
 import io.flutter.embedding.android.FlutterActivity;
@@ -125,6 +128,7 @@ public class MainActivity extends FlutterActivity {
     private final AtomicBoolean navicDetectionCompleted = new AtomicBoolean(false);
     private boolean hasL5BandSupport = false;
 
+    // V2 EMBEDDING: This is called when FlutterEngine is ready
     @Override
     public void configureFlutterEngine(@NonNull FlutterEngine flutterEngine) {
         super.configureFlutterEngine(flutterEngine);
@@ -151,6 +155,9 @@ public class MainActivity extends FlutterActivity {
                 case "checkLocationPermissions":
                     checkLocationPermissions(result);
                     break;
+                case "requestLocationPermissions":
+                    requestLocationPermissions(result);
+                    break;
                 case "startLocationUpdates":
                     startLocationUpdates(result);
                     break;
@@ -160,6 +167,15 @@ public class MainActivity extends FlutterActivity {
                 case "getAllSatellites":
                     getAllSatellites(result);
                     break;
+                case "openLocationSettings":
+                    openLocationSettings(result);
+                    break;
+                case "isLocationEnabled":
+                    isLocationEnabled(result);
+                    break;
+                case "getDeviceInfo":
+                    getDeviceInfo(result);
+                    break;
                 default:
                     Log.w("NavIC", "Unknown method: " + call.method);
                     result.notImplemented();
@@ -167,6 +183,7 @@ public class MainActivity extends FlutterActivity {
         });
     }
 
+    // =============== PERMISSION METHODS ===============
     private void checkLocationPermissions(MethodChannel.Result result) {
         try {
             boolean hasFineLocation = ContextCompat.checkSelfPermission(
@@ -177,7 +194,7 @@ public class MainActivity extends FlutterActivity {
             Map<String, Object> permissions = new HashMap<>();
             permissions.put("hasFineLocation", hasFineLocation);
             permissions.put("hasCoarseLocation", hasCoarseLocation);
-            permissions.put("allPermissionsGranted", hasFineLocation);
+            permissions.put("allPermissionsGranted", hasFineLocation || hasCoarseLocation);
 
             Log.d("NavIC", "Permission check - Fine Location: " + hasFineLocation + ", Coarse Location: " + hasCoarseLocation);
             result.success(permissions);
@@ -187,11 +204,78 @@ public class MainActivity extends FlutterActivity {
         }
     }
 
-    private boolean hasLocationPermissions() {
-        return ContextCompat.checkSelfPermission(
-                this, android.Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+    private void requestLocationPermissions(MethodChannel.Result result) {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.ACCESS_FINE_LOCATION)
+                        != PackageManager.PERMISSION_GRANTED) {
+
+                    ActivityCompat.requestPermissions(
+                            this,
+                            new String[]{
+                                    android.Manifest.permission.ACCESS_FINE_LOCATION,
+                                    android.Manifest.permission.ACCESS_COARSE_LOCATION
+                            },
+                            1001
+                    );
+
+                    Map<String, Object> response = new HashMap<>();
+                    response.put("requested", true);
+                    response.put("message", "Location permission requested");
+                    result.success(response);
+                } else {
+                    Map<String, Object> response = new HashMap<>();
+                    response.put("requested", false);
+                    response.put("message", "Location permission already granted");
+                    result.success(response);
+                }
+            } else {
+                Map<String, Object> response = new HashMap<>();
+                response.put("requested", false);
+                response.put("message", "Permission granted on older Android version");
+                result.success(response);
+            }
+        } catch (Exception e) {
+            Log.e("NavIC", "Error requesting permissions", e);
+            result.error("PERMISSION_REQUEST_ERROR", "Failed to request permissions", null);
+        }
     }
 
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions,
+                                           @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+
+        if (requestCode == 1001) {
+            Map<String, Object> permissionResult = new HashMap<>();
+
+            boolean granted = false;
+            if (grantResults.length > 0) {
+                granted = grantResults[0] == PackageManager.PERMISSION_GRANTED;
+            }
+
+            permissionResult.put("granted", granted);
+            permissionResult.put("message", granted ? "Location permission granted" : "Location permission denied");
+
+            // Send result back to Flutter
+            try {
+                handler.post(() -> {
+                    methodChannel.invokeMethod("onPermissionResult", permissionResult);
+                });
+            } catch (Exception e) {
+                Log.e("NavIC", "Error sending permission result", e);
+            }
+        }
+    }
+
+    private boolean hasLocationPermissions() {
+        return ContextCompat.checkSelfPermission(
+                this, android.Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+                ContextCompat.checkSelfPermission(
+                        this, android.Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    // =============== HARDWARE DETECTION METHODS ===============
     private void checkNavicHardwareSupport(MethodChannel.Result result) {
         Log.d("NavIC", "Starting enhanced NavIC hardware and satellite detection");
 
@@ -300,12 +384,14 @@ public class MainActivity extends FlutterActivity {
 
                 for (String prop : l5Properties) {
                     String value = (String) getMethod.invoke(null, prop, "");
-                    if (value.equalsIgnoreCase("true") || value.equalsIgnoreCase("1")) {
-                        result.hasL5Support = true;
-                        result.detectionMethods.add("SYSTEM_PROPERTY_L5");
-                        result.confidence = Math.max(result.confidence, 0.9);
-                        Log.d("NavIC", "✅ System property indicates L5 support: " + prop);
-                        break;
+                    if (!value.isEmpty()) {
+                        if (value.equalsIgnoreCase("true") || value.equalsIgnoreCase("1")) {
+                            result.hasL5Support = true;
+                            result.detectionMethods.add("SYSTEM_PROPERTY_L5");
+                            result.confidence = Math.max(result.confidence, 0.9);
+                            Log.d("NavIC", "✅ System property indicates L5 support: " + prop);
+                            break;
+                        }
                     }
                 }
             } catch (Exception e) {
@@ -1420,6 +1506,79 @@ public class MainActivity extends FlutterActivity {
         }
     }
 
+    // =============== UTILITY METHODS ===============
+    private void openLocationSettings(MethodChannel.Result result) {
+        try {
+            Intent intent = new Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS);
+            startActivity(intent);
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", true);
+            response.put("message", "Location settings opened");
+            result.success(response);
+        } catch (Exception e) {
+            Log.e("NavIC", "Error opening location settings", e);
+            result.error("SETTINGS_ERROR", "Failed to open location settings", null);
+        }
+    }
+
+    private void isLocationEnabled(MethodChannel.Result result) {
+        try {
+            boolean gpsEnabled = locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER);
+            boolean networkEnabled = locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER);
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("gpsEnabled", gpsEnabled);
+            response.put("networkEnabled", networkEnabled);
+            response.put("anyEnabled", gpsEnabled || networkEnabled);
+
+            result.success(response);
+        } catch (Exception e) {
+            Log.e("NavIC", "Error checking location status", e);
+            result.error("LOCATION_STATUS_ERROR", "Failed to check location status", null);
+        }
+    }
+
+    private void getDeviceInfo(MethodChannel.Result result) {
+        try {
+            Map<String, Object> deviceInfo = new HashMap<>();
+            deviceInfo.put("manufacturer", Build.MANUFACTURER);
+            deviceInfo.put("model", Build.MODEL);
+            deviceInfo.put("device", Build.DEVICE);
+            deviceInfo.put("hardware", Build.HARDWARE);
+            deviceInfo.put("board", Build.BOARD);
+            deviceInfo.put("androidVersion", Build.VERSION.SDK_INT);
+            deviceInfo.put("androidRelease", Build.VERSION.RELEASE);
+
+            // Get GNSS capabilities
+            Map<String, Object> gnssCapabilities = new HashMap<>();
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                try {
+                    Object gnssCaps = locationManager.getGnssCapabilities();
+                    if (gnssCaps != null) {
+                        try {
+                            Method hasIrnss = gnssCaps.getClass().getMethod("hasIrnss");
+                            Object v = hasIrnss.invoke(gnssCaps);
+                            if (v instanceof Boolean) {
+                                gnssCapabilities.put("hasIrnss", (Boolean) v);
+                            }
+                        } catch (NoSuchMethodException ignore) {
+                            gnssCapabilities.put("hasIrnss", false);
+                        }
+                    }
+                } catch (Exception e) {
+                    Log.d("NavIC", "Error getting GNSS capabilities for device info");
+                }
+            }
+
+            deviceInfo.put("gnssCapabilities", gnssCapabilities);
+            result.success(deviceInfo);
+        } catch (Exception e) {
+            Log.e("NavIC", "Error getting device info", e);
+            result.error("DEVICE_INFO_ERROR", "Failed to get device info", null);
+        }
+    }
+
     @Override
     protected void onDestroy() {
         Log.d("NavIC", "Activity destroying, cleaning up resources");
@@ -1509,7 +1668,8 @@ public class MainActivity extends FlutterActivity {
         }
     }
 
-    // Optimized satellite detection data classes
+    // =============== INNER CLASSES (ADD THESE AT THE END) ===============
+
     private static class EnhancedSatellite {
         int svid;
         String systemName;
@@ -1612,7 +1772,6 @@ public class MainActivity extends FlutterActivity {
         }
     }
 
-    // Data classes for detection results
     private static class HardwareDetectionResult {
         boolean isSupported;
         String detectionMethod;
