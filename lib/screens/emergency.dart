@@ -13,17 +13,18 @@ class EmergencyPage extends StatefulWidget {
 }
 
 class _EmergencyPageState extends State<EmergencyPage> {
-  final LocationService _locationService = LocationService();
+  final EnhancedLocationService _locationService = EnhancedLocationService();
   bool _isLoading = false;
   String _currentStatus = "Ready";
   bool _isLiveTracking = false;
   Timer? _locationUpdateTimer;
   EnhancedPosition? _lastPosition;
-  int _navicSatelliteCount = 0;
   String _locationSource = "GPS";
-  bool _isNavicHardwareSupported = false;
-  bool _isNavicActive = false;
-  Map<String, dynamic> _satelliteInfo = {};
+  bool _hasL5Band = false;
+  String _chipsetVendor = "Unknown";
+  String _chipsetModel = "Unknown";
+  double _l5Confidence = 0.0;
+  double _confidenceLevel = 0.0;
 
   @override
   void initState() {
@@ -32,28 +33,26 @@ class _EmergencyPageState extends State<EmergencyPage> {
   }
 
   void _initializeLocationService() async {
-    // Initialize location service which includes hardware detection
     await _locationService.startRealTimeMonitoring();
-
-    // Get initial hardware status
+    
     final serviceStats = _locationService.getServiceStats();
     setState(() {
-      _isNavicHardwareSupported = serviceStats['navicSupported'] as bool? ?? false;
-      _isNavicActive = serviceStats['navicActive'] as bool? ?? false;
+      _hasL5Band = _locationService.hasL5Band;
+      _chipsetVendor = _locationService.chipsetVendor;
+      _chipsetModel = _locationService.chipsetModel;
+      _l5Confidence = _locationService.l5Confidence;
+      _confidenceLevel = _locationService.confidenceLevel;
     });
   }
 
-  // ---------------- Permission Helper ----------------
   Future<bool> _checkAndRequestLocationPermission() async {
     try {
-      // Check location services
       final serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) {
         _showError("Location services are disabled. Please enable location services.");
         return false;
       }
 
-      // Check current permission
       LocationPermission permission = await Geolocator.checkPermission();
 
       if (permission == LocationPermission.deniedForever) {
@@ -62,7 +61,6 @@ class _EmergencyPageState extends State<EmergencyPage> {
       }
 
       if (permission == LocationPermission.denied) {
-        // Request permission
         permission = await Geolocator.requestPermission();
 
         if (permission == LocationPermission.denied ||
@@ -80,9 +78,7 @@ class _EmergencyPageState extends State<EmergencyPage> {
     }
   }
 
-  // ---------------- Helper: Get location safely ----------------
   Future<EnhancedPosition?> _getEnhancedLocation() async {
-    // Check permissions first
     final hasPermission = await _checkAndRequestLocationPermission();
     if (!hasPermission) {
       return null;
@@ -101,17 +97,18 @@ class _EmergencyPageState extends State<EmergencyPage> {
         return null;
       }
 
-      // Update hardware status from new position
+      // Update location service stats
       final serviceStats = _locationService.getServiceStats();
-
+      
       setState(() {
         _currentStatus = "Location Acquired";
         _lastPosition = enhancedPos;
-        _locationSource = enhancedPos.locationSource;
-        _navicSatelliteCount = enhancedPos.navicSatellites ?? 0;
-        _satelliteInfo = enhancedPos.satelliteInfo;
-        _isNavicActive = enhancedPos.isNavicEnhanced;
-        _isNavicHardwareSupported = serviceStats['navicSupported'] as bool? ?? false;
+        _hasL5Band = _locationService.hasL5Band;
+        _chipsetVendor = _locationService.chipsetVendor;
+        _chipsetModel = _locationService.chipsetModel;
+        _l5Confidence = _locationService.l5Confidence;
+        _confidenceLevel = _locationService.confidenceLevel;
+        _locationSource = enhancedPos.isNavicEnhanced ? "NAVIC" : enhancedPos.primarySystem;
       });
 
       return enhancedPos;
@@ -134,7 +131,7 @@ class _EmergencyPageState extends State<EmergencyPage> {
       ),
     );
     setState(() {
-      _currentStatus = "Error: $message";
+      _currentStatus = "Error: ${message.length > 30 ? message.substring(0, 30) + '...' : message}";
     });
   }
 
@@ -148,9 +145,8 @@ class _EmergencyPageState extends State<EmergencyPage> {
     );
   }
 
-  // ---------------- 1️⃣ Call Emergency Number ----------------
   Future<void> callEmergencyNumber() async {
-    const number = "tel:112"; // India emergency number
+    const number = "tel:112";
 
     try {
       if (await canLaunchUrl(Uri.parse(number))) {
@@ -163,7 +159,6 @@ class _EmergencyPageState extends State<EmergencyPage> {
     }
   }
 
-  // ---------------- 2️⃣ Share Current Location ----------------
   Future<void> shareLocation() async {
     EnhancedPosition? enhancedPos = await _getEnhancedLocation();
     if (enhancedPos == null) return;
@@ -172,7 +167,6 @@ class _EmergencyPageState extends State<EmergencyPage> {
     _showSuccess("Location shared successfully!");
   }
 
-  // ---------------- 3️⃣ Live Location Tracking ----------------
   Future<void> startLiveLocationSharing() async {
     if (_isLiveTracking) {
       _stopLiveTracking();
@@ -183,7 +177,6 @@ class _EmergencyPageState extends State<EmergencyPage> {
       return;
     }
 
-    // Check permissions first
     final hasPermission = await _checkAndRequestLocationPermission();
     if (!hasPermission) return;
 
@@ -193,32 +186,29 @@ class _EmergencyPageState extends State<EmergencyPage> {
     });
 
     try {
-      // Get initial position
       EnhancedPosition? initialPos = await _locationService.getCurrentLocation();
       if (initialPos == null) return;
 
       _lastPosition = initialPos;
 
-      // Start real-time satellite monitoring
       await _locationService.startRealTimeMonitoring();
 
-      // Start periodic location updates
       _startPeriodicLocationUpdates();
 
-      // Update hardware status
+      // Update service stats
       final serviceStats = _locationService.getServiceStats();
-
+      
       setState(() {
         _isLiveTracking = true;
         _isLoading = false;
         _currentStatus = "Live Sharing Active - Share the link!";
-        _locationSource = initialPos.locationSource;
-        _navicSatelliteCount = initialPos.navicSatellites ?? 0;
-        _isNavicActive = initialPos.isNavicEnhanced;
-        _isNavicHardwareSupported = serviceStats['navicSupported'] as bool? ?? false;
+        _hasL5Band = _locationService.hasL5Band;
+        _chipsetVendor = _locationService.chipsetVendor;
+        _chipsetModel = _locationService.chipsetModel;
+        _l5Confidence = _locationService.l5Confidence;
+        _locationSource = initialPos.isNavicEnhanced ? "NAVIC" : initialPos.primarySystem;
       });
 
-      // Create and share the live tracking message
       String liveShareMessage = _createLiveShareMessage(initialPos);
       Share.share(liveShareMessage);
 
@@ -234,8 +224,7 @@ class _EmergencyPageState extends State<EmergencyPage> {
   }
 
   void _startPeriodicLocationUpdates() {
-    // Update location every 30 seconds
-    _locationUpdateTimer = Timer.periodic(Duration(seconds: 30), (timer) async {
+    _locationUpdateTimer = Timer.periodic(const Duration(seconds: 30), (timer) async {
       if (!_isLiveTracking) {
         timer.cancel();
         return;
@@ -244,17 +233,11 @@ class _EmergencyPageState extends State<EmergencyPage> {
       try {
         EnhancedPosition? newPos = await _locationService.getCurrentLocation();
         if (newPos != null) {
-          // Update hardware status
-          final serviceStats = _locationService.getServiceStats();
-
           setState(() {
             _lastPosition = newPos;
-            _locationSource = newPos.locationSource;
-            _navicSatelliteCount = newPos.navicSatellites ?? 0;
-            _satelliteInfo = newPos.satelliteInfo;
-            _isNavicActive = newPos.isNavicEnhanced;
-            _isNavicHardwareSupported = serviceStats['navicSupported'] as bool? ?? false;
             _currentStatus = "Live Tracking - ${DateTime.now().toString().split('.').first}";
+            _hasL5Band = _locationService.hasL5Band;
+            _locationSource = newPos.isNavicEnhanced ? "NAVIC" : newPos.primarySystem;
           });
         }
       } catch (e) {
@@ -271,7 +254,6 @@ class _EmergencyPageState extends State<EmergencyPage> {
     });
   }
 
-  // ---------------- 4️⃣ Send Location Update ----------------
   Future<void> sendLocationUpdate() async {
     if (_lastPosition == null) {
       EnhancedPosition? currentPos = await _getEnhancedLocation();
@@ -288,7 +270,6 @@ class _EmergencyPageState extends State<EmergencyPage> {
     _showSuccess("Location update sent!");
   }
 
-  // ---------------- 5️⃣ Send Emergency SMS ----------------
   Future<void> sendEmergencySMS() async {
     EnhancedPosition? enhancedPos = await _getEnhancedLocation();
     if (enhancedPos == null) return;
@@ -307,7 +288,6 @@ class _EmergencyPageState extends State<EmergencyPage> {
     }
   }
 
-  // ---------------- Shared Message Creation Methods ----------------
   void _shareLocationMessage(EnhancedPosition enhancedPos, String type) {
     String message = _createLocationMessage(enhancedPos, type);
     Share.share(message);
@@ -317,29 +297,25 @@ class _EmergencyPageState extends State<EmergencyPage> {
     String googleMaps = "https://www.google.com/maps?q=${enhancedPos.latitude},${enhancedPos.longitude}";
     String openStreetMap = "https://www.openstreetmap.org/?mlat=${enhancedPos.latitude}&mlon=${enhancedPos.longitude}#map=18/${enhancedPos.latitude}/${enhancedPos.longitude}";
 
-    String navicStatus = enhancedPos.isNavicEnhanced
-        ? "🛰️ **NAVIC ENHANCED POSITIONING**\n"
-        : "📍 **STANDARD GPS POSITIONING**\n";
+    String positioningInfo = enhancedPos.isNavicEnhanced
+        ? "🛰️ **NAVIC POSITIONING**\n"
+        : "📍 **GPS POSITIONING**\n";
 
-    String satelliteInfo = _navicSatelliteCount > 0
-        ? "• Active NavIC Satellites: $_navicSatelliteCount\n"
-        : "• Using GPS Constellation\n";
+    String l5Info = _hasL5Band && _l5Confidence > 0.5
+        ? "• L5 Band: Available (${(_l5Confidence * 100).toInt()}% confidence)\n"
+        : "• L5 Band: Not available\n";
 
-    String hardwareStatus = _isNavicHardwareSupported
-        ? "• Device: NavIC Hardware Supported\n"
-        : "• Device: Standard GPS\n";
-
-    String activeStatus = _isNavicActive
-        ? "• Status: NavIC Active\n"
-        : "• Status: GPS Active\n";
+    String chipsetInfo = _chipsetVendor != "Unknown" 
+        ? "• Chipset: $_chipsetVendor $_chipsetModel\n"
+        : "";
 
     return """🚨 $type 🚨
 
-$navicStatus
-📡 Location Source: ${enhancedPos.locationSource}
+$positioningInfo
+📡 Source: ${enhancedPos.locationSource}
 🎯 Accuracy: ${enhancedPos.accuracy.toStringAsFixed(1)} meters
 🕒 Timestamp: ${DateTime.now().toString().split('.').first}
-$hardwareStatus$activeStatus$satelliteInfo
+$l5Info$chipsetInfo
 📍 Coordinates:
    • Latitude: ${enhancedPos.latitude.toStringAsFixed(6)}
    • Longitude: ${enhancedPos.longitude.toStringAsFixed(6)}
@@ -362,11 +338,9 @@ ${type == "LIVE LOCATION TRACKING" ? "🔄 Live tracking active - location updat
     String googleMaps = "https://www.google.com/maps?q=${enhancedPos.latitude},${enhancedPos.longitude}";
     String openStreetMap = "https://www.openstreetmap.org/?mlat=${enhancedPos.latitude}&mlon=${enhancedPos.longitude}#map=18/${enhancedPos.latitude}/${enhancedPos.longitude}";
 
-    String navicInfo = enhancedPos.isNavicEnhanced
-        ? "• Positioning: NavIC Enhanced (${_navicSatelliteCount} satellites)\n"
-        : "• Positioning: Standard GPS\n";
-
-    String confidence = "• Confidence: ${(enhancedPos.confidenceScore * 100).toStringAsFixed(0)}%\n";
+    String l5Info = _hasL5Band && _l5Confidence > 0.5
+        ? "• L5 Band: Available\n"
+        : "• L5 Band: Not available\n";
 
     return """EMERGENCY! Need assistance immediately!
 
@@ -374,7 +348,8 @@ My current location:
 • Latitude: ${enhancedPos.latitude.toStringAsFixed(6)}
 • Longitude: ${enhancedPos.longitude.toStringAsFixed(6)}
 • Accuracy: ${enhancedPos.accuracy.toStringAsFixed(1)} meters
-$navicInfo$confidence
+• Source: ${enhancedPos.locationSource}
+$l5Info
 Google Maps: $googleMaps
 OpenStreetMap: $openStreetMap
 
@@ -383,7 +358,6 @@ Timestamp: ${DateTime.now().toString().split('.').first}
 This is an automated emergency message.""";
   }
 
-  // ---------------- UI ----------------
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -484,12 +458,6 @@ This is an automated emergency message.""";
                       color: Colors.orange.shade700,
                       onPressed: sendEmergencySMS,
                     ),
-
-                    const SizedBox(height: 20),
-
-                    // Satellite Information
-                    if (_lastPosition != null && _satelliteInfo.isNotEmpty)
-                      _buildSatelliteInfoCard(),
                   ],
                 ),
               ),
@@ -522,16 +490,16 @@ This is an automated emergency message.""";
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Icon(
-                _isNavicHardwareSupported ? Icons.satellite_alt : Icons.gps_fixed,
-                color: _isNavicHardwareSupported ? Colors.green : Colors.blue,
+                _hasL5Band ? Icons.satellite_alt : Icons.gps_fixed,
+                color: _hasL5Band ? Colors.green : Colors.blue,
                 size: 20,
               ),
               const SizedBox(width: 8),
               Text(
-                _isNavicHardwareSupported ? 'NavIC Hardware Supported' : 'Standard GPS Device',
+                _hasL5Band ? 'L5 Band Supported' : 'Standard GPS',
                 style: TextStyle(
                   fontWeight: FontWeight.bold,
-                  color: _isNavicHardwareSupported ? Colors.green : Colors.blue,
+                  color: _hasL5Band ? Colors.green : Colors.blue,
                 ),
               ),
             ],
@@ -544,130 +512,47 @@ This is an automated emergency message.""";
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               decoration: BoxDecoration(
-                color: _locationSource == "NAVIC" ? Colors.green.shade50 : Colors.blue.shade50,
+                color: _lastPosition!.isNavicEnhanced ? Colors.green.shade50 : Colors.blue.shade50,
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(
-                  color: _locationSource == "NAVIC" ? Colors.green.shade300 : Colors.blue.shade300,
+                  color: _lastPosition!.isNavicEnhanced ? Colors.green.shade300 : Colors.blue.shade300,
                 ),
               ),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Icon(
-                    _locationSource == "NAVIC" ? Icons.satellite_alt : Icons.gps_fixed,
-                    color: _locationSource == "NAVIC" ? Colors.green.shade700 : Colors.blue.shade700,
+                    _lastPosition!.isNavicEnhanced ? Icons.satellite_alt : Icons.gps_fixed,
+                    color: _lastPosition!.isNavicEnhanced ? Colors.green.shade700 : Colors.blue.shade700,
                     size: 18,
                   ),
                   const SizedBox(width: 8),
                   Text(
-                    _locationSource == "NAVIC" ? 'Using NavIC Positioning' : 'Using GPS Positioning',
+                    _lastPosition!.isNavicEnhanced ? 'NavIC Positioning' : 'GPS Positioning',
                     style: TextStyle(
                       fontWeight: FontWeight.w600,
-                      color: _locationSource == "NAVIC" ? Colors.green.shade700 : Colors.blue.shade700,
+                      color: _lastPosition!.isNavicEnhanced ? Colors.green.shade700 : Colors.blue.shade700,
                     ),
                   ),
-                  if (_locationSource == "NAVIC" && _navicSatelliteCount > 0)
-                    Padding(
-                      padding: const EdgeInsets.only(left: 8.0),
-                      child: Text(
-                        '($_navicSatelliteCount sats)',
-                        style: TextStyle(
-                          color: Colors.green.shade600,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ),
                 ],
+              ),
+            ),
+
+          // Chipset Info
+          if (_chipsetVendor != "Unknown")
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                "Chipset: $_chipsetVendor $_chipsetModel",
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.grey.shade600,
+                ),
               ),
             ),
         ],
       ),
     );
-  }
-
-  Widget _buildSatelliteInfoCard() {
-    // Extract constellations from satellite info
-    final systemStats = _satelliteInfo['systemStats'] as Map<String, dynamic>? ?? {};
-    final constellations = <String, int>{};
-
-    for (final entry in systemStats.entries) {
-      if (entry.value is Map<String, dynamic>) {
-        final systemData = entry.value as Map<String, dynamic>;
-        final used = systemData['used'] as int? ?? 0;
-        final total = systemData['total'] as int? ?? 0;
-        if (total > 0) {
-          constellations[entry.key] = used;
-        }
-      }
-    }
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.1),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Satellite Information',
-            style: TextStyle(
-              fontWeight: FontWeight.bold,
-              fontSize: 16,
-              color: Colors.black87,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 12,
-            runSpacing: 8,
-            children: constellations.entries.map((entry) {
-              return Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: _getConstellationColor(entry.key),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  '${entry.key}: ${entry.value}',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              );
-            }).toList(),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Color _getConstellationColor(String constellation) {
-    switch (constellation) {
-      case 'IRNSS':
-        return Colors.green.shade600;
-      case 'GPS':
-        return Colors.blue.shade600;
-      case 'GLONASS':
-        return Colors.orange.shade600;
-      case 'GALILEO':
-        return Colors.purple.shade600;
-      case 'BEIDOU':
-        return Colors.red.shade600;
-      default:
-        return Colors.grey.shade600;
-    }
   }
 
   Widget _buildStatusIndicator() {

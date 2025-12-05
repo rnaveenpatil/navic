@@ -24,6 +24,8 @@ dependencies:
   # URL launching and sharing
   url_launcher: ^6.1.0
   share_plus: ^7.0.1
+  # for permission handling
+  permission_handler: ^11.0.2
 
   # UI
   cupertino_icons: ^1.0.5

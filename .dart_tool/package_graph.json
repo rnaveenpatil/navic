@@ -1,34 +1,23 @@
 {
   "roots": [
-    "navic"
+    "navic_ss"
   ],
   "packages": [
     {
-      "name": "navic",
+      "name": "navic_ss",
       "version": "1.0.0+1",
       "dependencies": [
-        "animations",
+        "cupertino_icons",
         "flutter",
         "flutter_map",
-        "flutter_svg",
         "geolocator",
-        "geolocator_android",
         "latlong2",
-        "platform",
+        "permission_handler",
         "share_plus",
-        "shimmer",
         "url_launcher"
       ],
       "devDependencies": [
-        "flutter_lints",
         "flutter_test"
-      ]
-    },
-    {
-      "name": "flutter_lints",
-      "version": "3.0.2",
-      "dependencies": [
-        "lints"
       ]
     },
     {
@@ -50,33 +39,21 @@
       ]
     },
     {
-      "name": "platform",
-      "version": "3.1.6",
+      "name": "cupertino_icons",
+      "version": "1.0.8",
       "dependencies": []
     },
     {
-      "name": "animations",
-      "version": "2.1.1",
-      "dependencies": [
-        "flutter"
-      ]
-    },
-    {
-      "name": "shimmer",
-      "version": "2.0.0",
-      "dependencies": [
-        "flutter"
-      ]
-    },
-    {
-      "name": "flutter_svg",
-      "version": "2.2.3",
+      "name": "permission_handler",
+      "version": "11.4.0",
       "dependencies": [
         "flutter",
-        "http",
-        "vector_graphics",
-        "vector_graphics_codec",
-        "vector_graphics_compiler"
+        "meta",
+        "permission_handler_android",
+        "permission_handler_apple",
+        "permission_handler_html",
+        "permission_handler_platform_interface",
+        "permission_handler_windows"
       ]
     },
     {
@@ -113,18 +90,8 @@
       ]
     },
     {
-      "name": "geolocator_android",
-      "version": "4.6.2",
-      "dependencies": [
-        "flutter",
-        "geolocator_platform_interface",
-        "meta",
-        "uuid"
-      ]
-    },
-    {
       "name": "geolocator",
-      "version": "11.1.0",
+      "version": "9.0.2",
       "dependencies": [
         "flutter",
         "geolocator_android",
@@ -143,14 +110,13 @@
     },
     {
       "name": "flutter_map",
-      "version": "6.2.1",
+      "version": "5.0.0",
       "dependencies": [
         "async",
         "collection",
         "flutter",
         "http",
         "latlong2",
-        "logger",
         "meta",
         "polylabel",
         "proj4dart",
@@ -168,11 +134,6 @@
         "sky_engine",
         "vector_math"
       ]
-    },
-    {
-      "name": "lints",
-      "version": "3.0.0",
-      "dependencies": []
     },
     {
       "name": "stream_channel",
@@ -259,39 +220,46 @@
       ]
     },
     {
-      "name": "vector_graphics_compiler",
-      "version": "1.1.19",
-      "dependencies": [
-        "args",
-        "meta",
-        "path",
-        "path_parsing",
-        "vector_graphics_codec",
-        "xml"
-      ]
-    },
-    {
-      "name": "vector_graphics_codec",
-      "version": "1.1.13",
-      "dependencies": []
-    },
-    {
-      "name": "vector_graphics",
-      "version": "1.1.19",
+      "name": "permission_handler_platform_interface",
+      "version": "4.3.0",
       "dependencies": [
         "flutter",
-        "http",
-        "vector_graphics_codec"
+        "meta",
+        "plugin_platform_interface"
       ]
     },
     {
-      "name": "http",
-      "version": "1.6.0",
+      "name": "permission_handler_windows",
+      "version": "0.2.1",
       "dependencies": [
-        "async",
-        "http_parser",
-        "meta",
+        "flutter",
+        "permission_handler_platform_interface"
+      ]
+    },
+    {
+      "name": "permission_handler_html",
+      "version": "0.1.3+5",
+      "dependencies": [
+        "flutter",
+        "flutter_web_plugins",
+        "permission_handler_platform_interface",
         "web"
+      ]
+    },
+    {
+      "name": "permission_handler_apple",
+      "version": "9.4.7",
+      "dependencies": [
+        "flutter",
+        "permission_handler_platform_interface"
+      ]
+    },
+    {
+      "name": "permission_handler_android",
+      "version": "12.1.0",
+      "dependencies": [
+        "flutter",
+        "permission_handler_platform_interface"
       ]
     },
     {
@@ -342,7 +310,7 @@
     },
     {
       "name": "file",
-      "version": "7.0.1",
+      "version": "6.1.4",
       "dependencies": [
         "meta",
         "path"
@@ -406,27 +374,8 @@
       ]
     },
     {
-      "name": "uuid",
-      "version": "4.5.2",
-      "dependencies": [
-        "crypto",
-        "fixnum",
-        "meta"
-      ]
-    },
-    {
-      "name": "geolocator_platform_interface",
-      "version": "4.2.6",
-      "dependencies": [
-        "flutter",
-        "meta",
-        "plugin_platform_interface",
-        "vector_math"
-      ]
-    },
-    {
       "name": "geolocator_windows",
-      "version": "0.2.5",
+      "version": "0.1.3",
       "dependencies": [
         "flutter",
         "geolocator_platform_interface"
@@ -434,7 +383,7 @@
     },
     {
       "name": "geolocator_web",
-      "version": "3.0.0",
+      "version": "2.2.1",
       "dependencies": [
         "flutter",
         "flutter_web_plugins",
@@ -447,6 +396,26 @@
       "dependencies": [
         "flutter",
         "geolocator_platform_interface"
+      ]
+    },
+    {
+      "name": "geolocator_android",
+      "version": "4.6.2",
+      "dependencies": [
+        "flutter",
+        "geolocator_platform_interface",
+        "meta",
+        "uuid"
+      ]
+    },
+    {
+      "name": "geolocator_platform_interface",
+      "version": "4.2.6",
+      "dependencies": [
+        "flutter",
+        "meta",
+        "plugin_platform_interface",
+        "vector_math"
       ]
     },
     {
@@ -475,10 +444,13 @@
       ]
     },
     {
-      "name": "logger",
-      "version": "2.6.2",
+      "name": "http",
+      "version": "1.6.0",
       "dependencies": [
-        "meta"
+        "async",
+        "http_parser",
+        "meta",
+        "web"
       ]
     },
     {
@@ -556,26 +528,11 @@
       ]
     },
     {
-      "name": "xml",
-      "version": "6.6.1",
+      "name": "plugin_platform_interface",
+      "version": "2.1.8",
       "dependencies": [
-        "collection",
-        "meta",
-        "petitparser"
+        "meta"
       ]
-    },
-    {
-      "name": "path_parsing",
-      "version": "1.1.0",
-      "dependencies": [
-        "meta",
-        "vector_math"
-      ]
-    },
-    {
-      "name": "args",
-      "version": "2.7.0",
-      "dependencies": []
     },
     {
       "name": "web",
@@ -583,19 +540,11 @@
       "dependencies": []
     },
     {
-      "name": "http_parser",
-      "version": "4.1.2",
+      "name": "uuid",
+      "version": "4.5.2",
       "dependencies": [
-        "collection",
-        "source_span",
-        "string_scanner",
-        "typed_data"
-      ]
-    },
-    {
-      "name": "plugin_platform_interface",
-      "version": "2.1.8",
-      "dependencies": [
+        "crypto",
+        "fixnum",
         "meta"
       ]
     },
@@ -612,18 +561,6 @@
       ]
     },
     {
-      "name": "fixnum",
-      "version": "1.1.1",
-      "dependencies": []
-    },
-    {
-      "name": "crypto",
-      "version": "3.0.7",
-      "dependencies": [
-        "typed_data"
-      ]
-    },
-    {
       "name": "wkt_parser",
       "version": "2.0.0",
       "dependencies": []
@@ -636,23 +573,30 @@
       ]
     },
     {
+      "name": "http_parser",
+      "version": "4.1.2",
+      "dependencies": [
+        "collection",
+        "source_span",
+        "string_scanner",
+        "typed_data"
+      ]
+    },
+    {
       "name": "vm_service",
       "version": "15.0.2",
       "dependencies": []
     },
     {
-      "name": "petitparser",
-      "version": "7.0.1",
-      "dependencies": [
-        "collection",
-        "meta"
-      ]
+      "name": "fixnum",
+      "version": "1.1.1",
+      "dependencies": []
     },
     {
-      "name": "typed_data",
-      "version": "1.4.0",
+      "name": "crypto",
+      "version": "3.0.7",
       "dependencies": [
-        "collection"
+        "typed_data"
       ]
     },
     {
@@ -707,6 +651,18 @@
       "dependencies": [
         "lists"
       ]
+    },
+    {
+      "name": "typed_data",
+      "version": "1.4.0",
+      "dependencies": [
+        "collection"
+      ]
+    },
+    {
+      "name": "platform",
+      "version": "3.1.6",
+      "dependencies": []
     },
     {
       "name": "xdg_directories",
